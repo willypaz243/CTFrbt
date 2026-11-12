@@ -72,9 +72,24 @@ model Challenge {
   submissions      Submission[]
   scores           Score[]
   unlockConditions UnlockCondition[]
+  containerConfig  ContainerConfig?
 
   @@index([category])
   @@index([isActive])
+}
+
+/// 1:1 con Challenge — su existencia define "reto dinámico".
+/// El build vive en el orquestador; aquí solo su estado.
+model ContainerConfig {
+  challengeId String    @id
+  dockerfile  String
+  buildState  String    @default("QUEUED") /// QUEUED | BUILDING | READY | FAILED
+  buildId     String?   /// id del build en el orquestador
+  imageDigest String?
+  buildLog    String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  challenge   Challenge @relation(fields: [challengeId], references: [id], onDelete: Cascade)
 }
 
 model ChallengeFlag {

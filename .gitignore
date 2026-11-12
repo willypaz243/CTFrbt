@@ -45,5 +45,8 @@ next-env.d.ts
 # Progress tracking (personal)
 PROGRESS.md
 
-# Claude
+# AGENTS
 .claude/
+.opencode/
+graphify-out/
+AGENTS.md

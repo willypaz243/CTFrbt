@@ -38,9 +38,28 @@ export default function AdminDashboard() {
     difficulty: "easy",
     link: "",
     hints: [],
+    mode: "static",
+    dockerfile: "",
   });
   const [creating, setCreating] = useState(false);
   const [formFile, setFormFile] = useState<File | null>(null);
+  const [buildStatus, setBuildStatus] = useState<{
+    state: string;
+    log: string | null;
+  } | null>(null);
+
+  const emptyForm: ChallengeForm = {
+    title: "",
+    description: "",
+    points: 100,
+    flag: "",
+    category: "web",
+    difficulty: "easy",
+    link: "",
+    hints: [],
+    mode: "static",
+    dockerfile: "",
+  };
 
   // Announcement
   const [announcementTitle, setAnnouncementTitle] = useState("");
@@ -117,24 +136,62 @@ export default function AdminDashboard() {
         toast.error(data.error);
         return;
       }
-      toast.success(`Challenge "${form.title}" created`);
+      const challengeId = data.challenge.id as string;
+
+      if (form.mode === "dynamic") {
+        // Save the Dockerfile and kick off the image build, then poll it.
+        const cfgRes = await fetch(
+          `/api/admin/challenges/${challengeId}/container`,
+          {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ dockerfile: form.dockerfile }),
+          },
+        );
+        const cfgData = await cfgRes.json();
+        if (!cfgRes.ok) {
+          toast.error(cfgData.error || "Failed to save Dockerfile");
+          return;
+        }
+        for (const w of cfgData.warnings ?? []) {
+          toast(`Dockerfile: ${w}`, { icon: "⚠️" });
+        }
+        const deadline = Date.now() + 10 * 60 * 1000;
+        let finalState = cfgData.config.buildState as string;
+        setBuildStatus({ state: finalState, log: null });
+        while (Date.now() < deadline) {
+          await new Promise((r) => setTimeout(r, 2000));
+          const pollRes = await fetch(
+            `/api/admin/challenges/${challengeId}/container`,
+          );
+          if (!pollRes.ok) break;
+          const pollData = await pollRes.json();
+          finalState = pollData.config.buildState as string;
+          const log = pollData.config.buildLog as string | null;
+          setBuildStatus({ state: finalState, log });
+          if (finalState === "READY" || finalState === "FAILED") break;
+        }
+        if (finalState === "READY") {
+          toast.success(`Challenge "${form.title}" created — image ready`);
+        } else {
+          toast.error(
+            `Challenge "${form.title}" created — image build ${finalState}`,
+          );
+        }
+      } else {
+        toast.success(`Challenge "${form.title}" created`);
+      }
+
       setShowForm(false);
-      setForm({
-        title: "",
-        description: "",
-        points: 100,
-        flag: "",
-        category: "web",
-        difficulty: "easy",
-        link: "",
-        hints: [],
-      });
+      setForm(emptyForm);
+      setBuildStatus(null);
       setFormFile(null);
       loadChallenges();
     } catch {
       toast.error("Failed to create challenge");
     } finally {
       setCreating(false);
+      setBuildStatus(null);
     }
   };
 
@@ -399,6 +456,7 @@ export default function AdminDashboard() {
           form={form}
           formFile={formFile}
           creating={creating}
+          buildStatus={buildStatus}
           categoryOptions={categoryOptions}
           onToggleForm={() => setShowForm(!showForm)}
           onFormChange={setForm}

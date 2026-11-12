@@ -26,6 +26,7 @@ export async function GET() {
       files: true,
       hints: true,
       unlockConditions: true,
+      containerConfig: true,
       _count: {
         select: { submissions: { where: { isCorrect: true } } },
       },

@@ -48,3 +48,24 @@ USER nextjs
 EXPOSE 3000
 
 CMD ["sh", "-c", "prisma migrate deploy && node server.js"]
+
+# ---------------- orchestrator (dynamic challenge containers) ----------------
+FROM base AS orchestrator
+WORKDIR /app
+COPY pnpm-workspace.yaml package.json pnpm-lock.yaml ./
+COPY apps/orchestrator/package.json ./apps/orchestrator/package.json
+RUN pnpm install --frozen-lockfile
+COPY apps/orchestrator/ ./apps/orchestrator/
+RUN cd apps/orchestrator \
+    && pnpm exec tsc -p tsconfig.json \
+    && mkdir -p /deploy \
+    && cp package.json /deploy/ \
+    && cp -r dist /deploy/dist \
+    && cd /deploy \
+    && npm install --omit=dev --no-audit --no-fund
+
+FROM node:22-alpine AS orchestrator-runner
+WORKDIR /app
+ENV NODE_ENV=production
+COPY --from=orchestrator /deploy ./
+CMD ["node", "dist/index.js"]

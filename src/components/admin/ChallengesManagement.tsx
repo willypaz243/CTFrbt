@@ -4,6 +4,13 @@ import type { FormEvent } from "react";
 import { useMemo } from "react";
 import { useSortableTable } from "@/hooks/useSortableTable";
 
+export interface ChallengeContainerConfig {
+  buildState: "QUEUED" | "BUILDING" | "READY" | "FAILED" | string;
+  buildId: string | null;
+  imageDigest: string | null;
+  buildLog: string | null;
+}
+
 export interface Challenge {
   id: string;
   title: string;
@@ -12,6 +19,7 @@ export interface Challenge {
   difficulty: string;
   isActive: boolean;
   isLocked: boolean;
+  containerConfig?: ChallengeContainerConfig | null;
   _count: { submissions: number };
 }
 
@@ -29,6 +37,13 @@ export interface ChallengeForm {
   difficulty: string;
   link: string;
   hints: ChallengeHint[];
+  mode: "static" | "dynamic";
+  dockerfile: string;
+}
+
+export interface BuildStatus {
+  state: "QUEUED" | "BUILDING" | "READY" | "FAILED" | string;
+  log: string | null;
 }
 
 interface ChallengesManagementProps {
@@ -37,6 +52,7 @@ interface ChallengesManagementProps {
   form: ChallengeForm;
   formFile: File | null;
   creating: boolean;
+  buildStatus: BuildStatus | null;
   categoryOptions: string[];
   onToggleForm: () => void;
   onFormChange: (form: ChallengeForm) => void;
@@ -58,6 +74,7 @@ export default function ChallengesManagement({
   form,
   formFile,
   creating,
+  buildStatus,
   categoryOptions,
   onToggleForm,
   onFormChange,
@@ -107,6 +124,22 @@ export default function ChallengesManagement({
       {showForm && (
         <div className="card" style={{ marginBottom: "16px" }}>
           <form onSubmit={onSubmit}>
+            <div style={{ marginBottom: "10px" }}>
+              <select
+                className="form-input"
+                value={form.mode}
+                onChange={(e) =>
+                  onFormChange({
+                    ...form,
+                    mode: e.target.value === "dynamic" ? "dynamic" : "static",
+                  })
+                }
+                style={{ maxWidth: "320px" }}
+              >
+                <option value="static">Static challenge</option>
+                <option value="dynamic">Dynamic challenge (Dockerfile)</option>
+              </select>
+            </div>
             <div
               style={{
                 display: "grid",
@@ -147,6 +180,24 @@ export default function ChallengesManagement({
               rows={4}
               style={{ marginBottom: "10px", resize: "vertical" }}
             />
+            {form.mode === "dynamic" && (
+              <textarea
+                className="form-input"
+                value={form.dockerfile}
+                onChange={(e) =>
+                  onFormChange({ ...form, dockerfile: e.target.value })
+                }
+                placeholder={"Dockerfile\nFROM alpine:3.20\n..."}
+                required
+                rows={6}
+                style={{
+                  marginBottom: "10px",
+                  resize: "vertical",
+                  fontFamily: "var(--font-mono)",
+                  fontSize: "12px",
+                }}
+              />
+            )}
             <div
               style={{
                 display: "grid",
@@ -333,12 +384,61 @@ export default function ChallengesManagement({
                 </div>
               ))}
             </div>
+            {buildStatus && (
+              <div
+                style={{
+                  marginBottom: "10px",
+                  padding: "10px",
+                  border: "1px solid var(--border)",
+                  borderRadius: "4px",
+                }}
+              >
+                <div
+                  style={{
+                    fontSize: "12px",
+                    fontWeight: 600,
+                    marginBottom: "6px",
+                  }}
+                >
+                  Image build:{" "}
+                  <span
+                    style={{
+                      color:
+                        buildStatus.state === "FAILED"
+                          ? "var(--danger)"
+                          : "var(--fg-muted)",
+                    }}
+                  >
+                    {buildStatus.state}
+                  </span>
+                </div>
+                {buildStatus.log && (
+                  <pre
+                    style={{
+                      margin: 0,
+                      maxHeight: "180px",
+                      overflow: "auto",
+                      fontSize: "11px",
+                      fontFamily: "var(--font-mono)",
+                      color: "var(--fg-dim)",
+                      whiteSpace: "pre-wrap",
+                    }}
+                  >
+                    {buildStatus.log.slice(-4000)}
+                  </pre>
+                )}
+              </div>
+            )}
             <button
               type="submit"
               className="btn btn-primary"
               disabled={creating}
             >
-              {creating ? "Creating..." : "Create Challenge"}
+              {creating
+                ? buildStatus
+                  ? `Building image (${buildStatus.state})...`
+                  : "Creating..."
+                : "Create Challenge"}
             </button>
           </form>
         </div>
@@ -364,6 +464,7 @@ export default function ChallengesManagement({
             <th {...getThProps("status")}>
               Status{getSortIndicator("status")}
             </th>
+            <th>Container</th>
             <th style={{ textAlign: "right" }}>Actions</th>
           </tr>
         </thead>
@@ -384,6 +485,29 @@ export default function ChallengesManagement({
                 >
                   {c.isActive ? "Active" : "Inactive"}
                 </span>
+              </td>
+              <td>
+                {c.containerConfig ? (
+                  <span
+                    title={c.containerConfig.imageDigest ?? undefined}
+                    style={{
+                      fontSize: "12px",
+                      fontFamily: "var(--font-mono)",
+                      color:
+                        c.containerConfig.buildState === "READY"
+                          ? "var(--success)"
+                          : c.containerConfig.buildState === "FAILED"
+                            ? "var(--danger)"
+                            : "var(--fg-muted)",
+                    }}
+                  >
+                    {c.containerConfig.buildState}
+                  </span>
+                ) : (
+                  <span style={{ fontSize: "12px", color: "var(--fg-dim)" }}>
+                    —
+                  </span>
+                )}
               </td>
               <td style={{ textAlign: "right" }}>
                 <button

@@ -1,0 +1,22 @@
+{
+  "name": "@ctfrbt/orchestrator",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "CTFrbt container orchestrator: builds challenge images and manages per-team containers over the Docker Engine API.",
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "dockerode": "^4.0.7",
+    "tar": "^7.4.3"
+  },
+  "devDependencies": {
+    "@types/dockerode": "^3.3.33",
+    "@types/node": "^24.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.9.0"
+  }
+}
