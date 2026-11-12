@@ -19,6 +19,9 @@ interface ContainerConfigResponse {
   buildId: string | null;
   imageDigest: string | null;
   buildLog: string | null;
+  pendingState: string | null;
+  pendingDigest: string | null;
+  pendingLog: string | null;
   testContainerId: string | null;
   testState: string | null;
   testAccessUrl: string | null;
@@ -39,6 +42,9 @@ function toResponse(config: {
   buildId: string | null;
   imageDigest: string | null;
   buildLog: string | null;
+  pendingState: string | null;
+  pendingDigest: string | null;
+  pendingLog: string | null;
   testContainerId: string | null;
   testState: string | null;
   testAccessUrl: string | null;
@@ -50,6 +56,9 @@ function toResponse(config: {
     buildId: config.buildId,
     imageDigest: config.imageDigest,
     buildLog: config.buildLog,
+    pendingState: config.pendingState,
+    pendingDigest: config.pendingDigest,
+    pendingLog: config.pendingLog,
     testContainerId: config.testContainerId,
     testState: config.testState,
     testAccessUrl: config.testAccessUrl,
@@ -88,6 +97,14 @@ export async function PUT(
     );
   }
 
+  // Rolling rebuild (#4): if an image is already active (imageDigest),
+  // keep it serving while the new build runs; only a first build moves
+  // buildState out of READY.
+  const previous = await prisma.containerConfig.findUnique({
+    where: { challengeId: id },
+  });
+  const hasActiveImage = previous?.imageDigest != null;
+
   let config = await prisma.containerConfig.upsert({
     where: { challengeId: id },
     create: {
@@ -95,12 +112,22 @@ export async function PUT(
       dockerfile: body.dockerfile as string,
       buildState: "QUEUED",
     },
-    update: {
-      dockerfile: body.dockerfile as string,
-      buildState: "QUEUED",
-      buildId: null,
-      buildLog: null,
-    },
+    update: hasActiveImage
+      ? {
+          dockerfile: body.dockerfile as string,
+          pendingState: "BUILDING",
+          pendingDigest: null,
+          pendingLog: null,
+        }
+      : {
+          dockerfile: body.dockerfile as string,
+          buildState: "QUEUED",
+          buildId: null,
+          buildLog: null,
+          pendingState: null,
+          pendingDigest: null,
+          pendingLog: null,
+        },
   });
 
   // Gather the challenge's uploaded files so the Dockerfile can COPY them.
@@ -116,10 +143,15 @@ export async function PUT(
     } catch {
       config = await prisma.containerConfig.update({
         where: { challengeId: id },
-        data: {
-          buildState: "FAILED",
-          buildLog: `missing file on disk: ${row.name}`,
-        },
+        data: hasActiveImage
+          ? {
+              pendingState: "FAILED",
+              pendingLog: `missing file on disk: ${row.name}`,
+            }
+          : {
+              buildState: "FAILED",
+              buildLog: `missing file on disk: ${row.name}`,
+            },
       });
       return NextResponse.json(
         { config: toResponse(config), warnings: validation.warnings },
@@ -137,7 +169,9 @@ export async function PUT(
   if ("error" in started) {
     config = await prisma.containerConfig.update({
       where: { challengeId: id },
-      data: { buildState: "FAILED", buildLog: started.error },
+      data: hasActiveImage
+        ? { pendingState: "FAILED", pendingLog: started.error }
+        : { buildState: "FAILED", buildLog: started.error },
     });
     return NextResponse.json(
       { config: toResponse(config), warnings: validation.warnings },
@@ -147,7 +181,9 @@ export async function PUT(
 
   config = await prisma.containerConfig.update({
     where: { challengeId: id },
-    data: { buildState: "BUILDING", buildId: started.buildId },
+    data: hasActiveImage
+      ? { buildId: started.buildId }
+      : { buildState: "BUILDING", buildId: started.buildId },
   });
 
   return NextResponse.json({
@@ -177,38 +213,57 @@ export async function GET(
     );
   }
 
-  // Refresh non-terminal builds from the orchestrator.
+  // Refresh a non-terminal build from the orchestrator. While an image is
+  // active, a failing build only marks the *pending* build — the old
+  // image keeps serving (rolling rebuild, #4).
   if (
     config.buildId &&
-    (config.buildState === "QUEUED" || config.buildState === "BUILDING")
+    (config.buildState === "QUEUED" ||
+      config.buildState === "BUILDING" ||
+      config.pendingState === "BUILDING")
   ) {
     const result = await getBuild(config.buildId);
     if (result === null) {
       // The orchestrator lost track of the build (e.g. restarted).
       await prisma.containerConfig.update({
         where: { challengeId: id },
-        data: {
-          buildState: "FAILED",
-          buildLog: "build state lost (orchestrator restarted)",
-        },
+        data: config.imageDigest
+          ? {
+              pendingState: "FAILED",
+              pendingLog: "build state lost (orchestrator restarted)",
+            }
+          : {
+              buildState: "FAILED",
+              buildLog: "build state lost (orchestrator restarted)",
+            },
       });
     } else if (result.state === "READY") {
+      // Al READY, imageDigest = pendingDigest: the new image becomes the
+      // active one; running instances keep their own digest.
       await prisma.containerConfig.update({
         where: { challengeId: id },
         data: {
           buildState: "READY",
           imageDigest: result.digest,
+          pendingDigest: result.digest,
+          pendingState: null,
+          pendingLog: null,
           buildLog: result.log.slice(-20_000),
         },
       });
     } else if (result.state === "FAILED") {
       await prisma.containerConfig.update({
         where: { challengeId: id },
-        data: {
-          buildState: "FAILED",
-          imageDigest: null,
-          buildLog: result.log.slice(-20_000),
-        },
+        data: config.imageDigest
+          ? {
+              pendingState: "FAILED",
+              pendingLog: result.log.slice(-20_000),
+            }
+          : {
+              buildState: "FAILED",
+              imageDigest: null,
+              buildLog: result.log.slice(-20_000),
+            },
       });
     }
   }

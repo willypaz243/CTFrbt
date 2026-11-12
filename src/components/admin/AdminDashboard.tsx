@@ -49,6 +49,7 @@ export default function AdminDashboard() {
   } | null>(null);
   const [uploadingId, setUploadingId] = useState<string | null>(null);
   const [testBusyId, setTestBusyId] = useState<string | null>(null);
+  const [rebuildBusyId, setRebuildBusyId] = useState<string | null>(null);
 
   const emptyForm: ChallengeForm = {
     title: "",
@@ -323,6 +324,31 @@ export default function AdminDashboard() {
     }
   };
 
+  const rebuildDockerfile = async (challengeId: string, dockerfile: string) => {
+    setRebuildBusyId(challengeId);
+    try {
+      const res = await fetch(
+        `/api/admin/challenges/${challengeId}/container`,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ dockerfile }),
+        },
+      );
+      const data = await res.json();
+      if (!res.ok) {
+        toast.error(data.error || "Failed to save Dockerfile");
+        return;
+      }
+      loadChallenges();
+      toast.success("Dockerfile saved — rebuilding image");
+    } catch {
+      toast.error("Failed to save Dockerfile");
+    } finally {
+      setRebuildBusyId(null);
+    }
+  };
+
   const createAnnouncement = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
@@ -551,6 +577,7 @@ export default function AdminDashboard() {
           categoryOptions={categoryOptions}
           uploadingId={uploadingId}
           testBusyId={testBusyId}
+          rebuildBusyId={rebuildBusyId}
           onToggleForm={() => setShowForm(!showForm)}
           onFormChange={setForm}
           onFormFilesChange={setFormFiles}
@@ -561,6 +588,7 @@ export default function AdminDashboard() {
           onDeleteFile={deleteFile}
           onStartTest={startTest}
           onStopTest={stopTest}
+          onRebuild={rebuildDockerfile}
         />
       )}
 

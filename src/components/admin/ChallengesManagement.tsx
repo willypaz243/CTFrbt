@@ -5,10 +5,14 @@ import { Fragment, useMemo, useState } from "react";
 import { useSortableTable } from "@/hooks/useSortableTable";
 
 export interface ChallengeContainerConfig {
+  dockerfile: string;
   buildState: "QUEUED" | "BUILDING" | "READY" | "FAILED" | string;
   buildId: string | null;
   imageDigest: string | null;
   buildLog: string | null;
+  pendingState: string | null;
+  pendingDigest: string | null;
+  pendingLog: string | null;
   testState: string | null;
   testAccessUrl: string | null;
   testExpiresAt: string | null;
@@ -68,6 +72,7 @@ interface ChallengesManagementProps {
   categoryOptions: string[];
   uploadingId: string | null;
   testBusyId: string | null;
+  rebuildBusyId: string | null;
   onToggleForm: () => void;
   onFormChange: (form: ChallengeForm) => void;
   onFormFilesChange: (files: File[]) => void;
@@ -78,6 +83,7 @@ interface ChallengesManagementProps {
   onDeleteFile: (challengeId: string, fileId: string) => void;
   onStartTest: (challengeId: string) => void;
   onStopTest: (challengeId: string) => void;
+  onRebuild: (challengeId: string, dockerfile: string) => void;
 }
 
 function formatSize(bytes: number): string {
@@ -183,6 +189,113 @@ function ChallengeFilesPanel({
             </button>
           </div>
         ))
+      )}
+    </div>
+  );
+}
+
+/**
+ * Dockerfile editor for a dynamic challenge: save a modified Dockerfile to
+ * kick a rolling rebuild — the active image keeps serving until the new
+ * build is READY.
+ */
+function DockerfilePanel({
+  challenge,
+  busy,
+  onRebuild,
+}: {
+  challenge: Challenge;
+  busy: boolean;
+  onRebuild: (challengeId: string, dockerfile: string) => void;
+}) {
+  const config = challenge.containerConfig!;
+  const [draft, setDraft] = useState(config.dockerfile);
+  const rebuilding = config.pendingState === "BUILDING";
+  const initialBuildRunning =
+    config.buildState === "QUEUED" || config.buildState === "BUILDING";
+  const failedLog =
+    config.pendingState === "FAILED"
+      ? config.pendingLog
+      : config.buildState === "FAILED"
+        ? config.buildLog
+        : null;
+  return (
+    <div style={{ marginBottom: "10px" }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: "8px",
+          marginBottom: "6px",
+        }}
+      >
+        <span style={{ fontSize: "12px", fontWeight: 600 }}>Dockerfile</span>
+        <span
+          style={{
+            fontSize: "11px",
+            fontFamily: "var(--font-mono)",
+            color: failedLog
+              ? "var(--danger)"
+              : rebuilding || initialBuildRunning
+                ? "var(--fg-muted)"
+                : "var(--success)",
+          }}
+        >
+          {rebuilding
+            ? "rebuilding…"
+            : failedLog
+              ? "last build failed"
+              : initialBuildRunning
+                ? config.buildState
+                : "READY"}
+        </span>
+        <button
+          type="button"
+          className="btn"
+          style={{
+            fontSize: "11px",
+            padding: "2px 6px",
+            marginLeft: "auto",
+            cursor: busy || rebuilding ? "default" : "pointer",
+          }}
+          disabled={busy || rebuilding}
+          onClick={() => onRebuild(challenge.id, draft)}
+        >
+          {busy ? "Saving..." : "Save & rebuild"}
+        </button>
+      </div>
+      <textarea
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        spellCheck={false}
+        style={{
+          width: "100%",
+          boxSizing: "border-box",
+          minHeight: "120px",
+          fontFamily: "var(--font-mono)",
+          fontSize: "12px",
+        }}
+      />
+      {rebuilding && (
+        <div
+          style={{ fontSize: "11px", color: "var(--fg-dim)", marginTop: "4px" }}
+        >
+          The current image keeps serving while the new one builds.
+        </div>
+      )}
+      {failedLog && (
+        <pre
+          style={{
+            marginTop: "6px",
+            maxHeight: "180px",
+            overflow: "auto",
+            fontSize: "11px",
+            background: "var(--bg-muted, transparent)",
+            padding: "6px",
+          }}
+        >
+          {failedLog.slice(-4000)}
+        </pre>
       )}
     </div>
   );
@@ -315,6 +428,7 @@ export default function ChallengesManagement({
   categoryOptions,
   uploadingId,
   testBusyId,
+  rebuildBusyId,
   onToggleForm,
   onFormChange,
   onFormFilesChange,
@@ -325,6 +439,7 @@ export default function ChallengesManagement({
   onDeleteFile,
   onStartTest,
   onStopTest,
+  onRebuild,
 }: ChallengesManagementProps) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const sortAccessors = useMemo(
@@ -832,6 +947,12 @@ export default function ChallengesManagement({
                     colSpan={8}
                     style={{ background: "var(--bg-muted, transparent)" }}
                   >
+                    <DockerfilePanel
+                      key={c.id}
+                      challenge={c}
+                      busy={rebuildBusyId === c.id}
+                      onRebuild={onRebuild}
+                    />
                     <ChallengeFilesPanel
                       challenge={c}
                       uploading={uploadingId === c.id}

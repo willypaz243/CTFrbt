@@ -87,6 +87,11 @@ model ContainerConfig {
   buildId     String?   /// id del build en el orquestador
   imageDigest String?
   buildLog    String?
+  // Rebuild en curso (#4): la imagen activa (imageDigest) sigue sirviendo
+  // mientras el build nuevo corre; al READY, imageDigest = pendingDigest.
+  pendingState  String?  /// BUILDING | FAILED (null = sin rebuild en curso)
+  pendingDigest String?
+  pendingLog    String?
   // Instancia de prueba (solo admin, #3): a lo sumo una por reto.
   testContainerId String?  /// nombre/id del contenedor en el orquestador
   testState       String?  /// STARTING | RUNNING | STOPPED | EXPIRED | FAILED
