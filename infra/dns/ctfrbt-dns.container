@@ -1,16 +1,18 @@
-# CTFrbt dev DNS (historia #15) — quadlet de SISTEMA (root): bind de puerto 53.
-# Instalacion (ver README.md): copiar a /etc/containers/systemd/ctfrbt-dns.container
+# CTFrbt dev DNS (historia #15) — quadlet de USUARIO (rootless, sin sudo).
+# Rootless no puede bindear 53 (ip_unprivileged_port_start=1024): se publica
+# el 5354 del host y el resolvedor se configura con sintaxis IP:puerto
+# (NetworkManager: ipv4.dns "192.168.0.10:5354").
+# Instalacion: cp a ~/.config/containers/systemd/ (ver README.md)
 [Unit]
 Description=CTFrbt dev DNS (dnsmasq *.inst.ctfrbt.home.arpa)
-After=network-online.target
-Wants=network-online.target
 
 [Container]
 ContainerName=ctfrbt-dns
 Image=localhost/ctfrbt-dns:latest
-# host network: resuelve en la red LAN; interface= limita a enp13s0 (no interfiere con los dnsmasq de libvirt en virbr*)
-NetworkMode=host
-Environment=DNSMASQ_INTERFACE=enp13s0
+# 0.0.0.0 para que dispositivos de la LAN tambien puedan preguntar
+PublishPort=0.0.0.0:5354:53/udp
+PublishPort=0.0.0.0:5354:53/tcp
+Environment=DNSMASQ_INTERFACE=
 Environment=DNSMASQ_WILDCARD_DOMAIN=inst.ctfrbt.home.arpa
 Environment=DNSMASQ_WILDCARD_IP=192.168.0.10
 Environment=DNSMASQ_UPSTREAM=192.168.0.53
@@ -20,4 +22,4 @@ Restart=always
 RestartSec=2
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=default.target

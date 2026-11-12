@@ -13,4 +13,7 @@ CONF=/etc/dnsmasq.d/99-ctfrbt.conf
 } >"$CONF"
 
 echo "[ctfrbt-dns] dominio=*.${DNSMASQ_WILDCARD_DOMAIN} -> ${DNSMASQ_WILDCARD_IP} | upstream=${DNSMASQ_UPSTREAM} | interface=${DNSMASQ_INTERFACE:-todas}"
-exec dnsmasq --no-daemon --conf-dir=/etc/dnsmasq.d
+# --conf-file=/dev/null: ignora /etc/dnsmasq.conf de alpine (trae local-service,
+# que descarta las consultas que llegan desde la gateway link-local de pasta en
+# rootless; no se puede anular con no-local-service ni con lista en 2.90).
+exec dnsmasq --no-daemon --conf-file=/dev/null --conf-dir=/etc/dnsmasq.d
