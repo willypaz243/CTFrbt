@@ -1,5 +1,11 @@
 # DNS local de desarrollo (dnsmasq en podman rootless) — historia #15
 
+> **CONGELADO (v10, 2026-11-12):** el equipo decidió **no usar subdominios/DNS**
+> por ahora; el acceso a instancias pasa a **puertos aleatorios**
+> (`.opencode/plan/stories/16-canal-puertos-web.md`). Esta infra queda útil para
+> desarrollar el canal de gateway (historia #5) en local; **no** la necesitan
+> los jugadores ni la red del evento.
+
 Resuelve `*.inst.ctfrbt.home.arpa` → IP LAN del host de dev (192.168.0.10) y
 reenvía el resto de dominios al DNS de la red (192.168.0.53). **Todo rootless,
 sin sudo.** NO se usa `.local` (reservado mDNS: avahi/systemd lo interceptan).
