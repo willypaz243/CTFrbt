@@ -16,9 +16,16 @@ export interface OrchestratorBuildResult {
   digest: string | null;
 }
 
-function headers(): HeadersInit {
+/** A challenge file to include in the Docker build context. */
+export interface BuildFile {
+  /** Name the file must be COPYed by in the Dockerfile (flat, sanitized). */
+  name: string;
+  data: Uint8Array;
+}
+
+function headers(json = true): HeadersInit {
   return {
-    "Content-Type": "application/json",
+    ...(json ? { "Content-Type": "application/json" } : {}),
     Authorization: `Bearer ${ORCHESTRATOR_SECRET}`,
   };
 }
@@ -37,12 +44,33 @@ export async function orchestratorHealthy(): Promise<boolean> {
 export async function startBuild(
   dockerfile: string,
   tag: string,
+  files: BuildFile[] = [],
 ): Promise<{ buildId: string } | { error: string }> {
   try {
+    // With files the body is multipart (one part per file, named by the
+    // flat file name so the orchestrator can place it in the build context).
+    // Without files we keep the lighter JSON payload.
+    let payload: BodyInit;
+    let useJson = true;
+    if (files.length > 0) {
+      const fd = new FormData();
+      fd.append("dockerfile", dockerfile);
+      fd.append("tag", tag);
+      for (const file of files) {
+        // slice() yields a copy backed by a plain ArrayBuffer, which is a
+        // valid BlobPart (a shared/growable buffer view is not).
+        fd.append(file.name, new Blob([file.data.slice().buffer]));
+      }
+      payload = fd;
+      useJson = false;
+    } else {
+      payload = JSON.stringify({ dockerfile, tag });
+    }
+
     const res = await fetch(`${ORCHESTRATOR_URL}/builds`, {
       method: "POST",
-      headers: headers(),
-      body: JSON.stringify({ dockerfile, tag }),
+      headers: headers(useJson),
+      body: payload,
       cache: "no-store",
     });
     const body = (await res.json()) as { buildId?: string; error?: string };

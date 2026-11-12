@@ -32,7 +32,7 @@ ENV NEXT_TELEMETRY_DISABLED=1
 ENV PORT=3000
 ENV HOSTNAME="0.0.0.0"
 
-RUN apk add --no-cache postgresql-client \
+RUN apk add --no-cache postgresql-client su-exec \
     && addgroup --system --gid 1001 nodejs \
     && adduser --system --uid 1001 nextjs
 
@@ -44,10 +44,13 @@ COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 COPY --from=builder --chown=nextjs:nodejs /app/prisma ./prisma
 
-USER nextjs
+# The uploads volume's mount point is owned by root (rootless podman does
+# not copy ownership up), so start as root just long enough to fix it, then
+# drop to nextjs for the actual app.
+USER root
 EXPOSE 3000
 
-CMD ["sh", "-c", "prisma migrate deploy && node server.js"]
+CMD ["sh", "-c", "chown nextjs:nodejs /app/public/uploads && exec su-exec nextjs sh -c 'prisma migrate deploy && node server.js'"]
 
 # ---------------- orchestrator (dynamic challenge containers) ----------------
 FROM base AS orchestrator

@@ -1,7 +1,7 @@
 "use client";
 
 import type { FormEvent } from "react";
-import { useMemo } from "react";
+import { Fragment, useMemo, useState } from "react";
 import { useSortableTable } from "@/hooks/useSortableTable";
 
 export interface ChallengeContainerConfig {
@@ -9,6 +9,14 @@ export interface ChallengeContainerConfig {
   buildId: string | null;
   imageDigest: string | null;
   buildLog: string | null;
+}
+
+export interface ChallengeFileInfo {
+  id: string;
+  name: string;
+  path: string;
+  size: number;
+  storedName: string;
 }
 
 export interface Challenge {
@@ -20,6 +28,7 @@ export interface Challenge {
   isActive: boolean;
   isLocked: boolean;
   containerConfig?: ChallengeContainerConfig | null;
+  files?: ChallengeFileInfo[];
   _count: { submissions: number };
 }
 
@@ -50,16 +59,19 @@ interface ChallengesManagementProps {
   challenges: Challenge[];
   showForm: boolean;
   form: ChallengeForm;
-  formFile: File | null;
+  formFiles: File[];
   creating: boolean;
   buildStatus: BuildStatus | null;
   categoryOptions: string[];
+  uploadingId: string | null;
   onToggleForm: () => void;
   onFormChange: (form: ChallengeForm) => void;
-  onFormFileChange: (file: File | null) => void;
+  onFormFilesChange: (files: File[]) => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
   onToggleChallenge: (id: string, isActive: boolean) => void;
   onDeleteChallenge: (id: string, title: string) => void;
+  onUploadFiles: (challengeId: string, files: File[]) => void;
+  onDeleteFile: (challengeId: string, fileId: string) => void;
 }
 
 function formatSize(bytes: number): string {
@@ -68,21 +80,127 @@ function formatSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+/**
+ * Expandable panel under a dynamic challenge row: lists the files that go
+ * into the image build context and lets the admin upload/remove them.
+ */
+function ChallengeFilesPanel({
+  challenge,
+  uploading,
+  onUploadFiles,
+  onDeleteFile,
+}: {
+  challenge: Challenge;
+  uploading: boolean;
+  onUploadFiles: (challengeId: string, files: File[]) => void;
+  onDeleteFile: (challengeId: string, fileId: string) => void;
+}) {
+  const files = challenge.files ?? [];
+  return (
+    <div style={{ padding: "10px" }}>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          marginBottom: "6px",
+        }}
+      >
+        <span style={{ fontSize: "12px", fontWeight: 600 }}>
+          Files (image build context)
+        </span>
+        <label
+          className="btn"
+          style={{
+            fontSize: "11px",
+            padding: "4px 8px",
+            cursor: uploading ? "default" : "pointer",
+            margin: 0,
+          }}
+        >
+          {uploading ? "Uploading..." : "Upload files"}
+          <input
+            type="file"
+            multiple
+            hidden
+            disabled={uploading}
+            onChange={(e) => {
+              const picked = Array.from(e.target.files ?? []);
+              if (picked.length > 0) onUploadFiles(challenge.id, picked);
+              e.target.value = "";
+            }}
+          />
+        </label>
+      </div>
+      <div
+        style={{
+          fontSize: "11px",
+          color: "var(--fg-dim)",
+          marginBottom: "8px",
+        }}
+      >
+        The Dockerfile must COPY these files by their exact (stored) name.
+      </div>
+      {files.length === 0 ? (
+        <span style={{ fontSize: "12px", color: "var(--fg-dim)" }}>
+          No files uploaded yet.
+        </span>
+      ) : (
+        files.map((file) => (
+          <div
+            key={file.id}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "8px",
+              marginBottom: "4px",
+              fontSize: "12px",
+            }}
+          >
+            <span style={{ fontFamily: "var(--font-mono)" }} title={file.name}>
+              {file.storedName}
+            </span>
+            <span style={{ color: "var(--fg-dim)" }}>
+              {formatSize(file.size)}
+            </span>
+            <button
+              type="button"
+              className="btn"
+              style={{
+                fontSize: "11px",
+                padding: "2px 6px",
+                marginLeft: "auto",
+              }}
+              onClick={() => onDeleteFile(challenge.id, file.id)}
+            >
+              Remove
+            </button>
+          </div>
+        ))
+      )}
+    </div>
+  );
+}
+
 export default function ChallengesManagement({
   challenges,
   showForm,
   form,
-  formFile,
+  formFiles,
   creating,
   buildStatus,
   categoryOptions,
+  uploadingId,
   onToggleForm,
   onFormChange,
-  onFormFileChange,
+  onFormFilesChange,
   onSubmit,
   onToggleChallenge,
   onDeleteChallenge,
+  onUploadFiles,
+  onDeleteFile,
 }: ChallengesManagementProps) {
+  const [expandedId, setExpandedId] = useState<string | null>(null);
   const sortAccessors = useMemo(
     () => ({
       title: (c: Challenge) => c.title,
@@ -272,30 +390,46 @@ export default function ChallengesManagement({
                   margin: 0,
                 }}
               >
-                {formFile ? "Change file" : "Upload file"}
+                {formFiles.length > 0 ? "Add more files" : "Upload files"}
                 <input
                   type="file"
+                  multiple
                   hidden
                   onChange={(e) => {
-                    onFormFileChange(e.target.files?.[0] ?? null);
+                    const picked = Array.from(e.target.files ?? []);
+                    onFormFilesChange([...formFiles, ...picked]);
                     e.target.value = "";
                   }}
                 />
               </label>
-              {formFile && (
-                <>
-                  <span style={{ fontSize: "12px", color: "var(--fg-dim)" }}>
-                    {formFile.name} ({formatSize(formFile.size)})
-                  </span>
+              {formFiles.map((file, index) => (
+                <span
+                  key={`${file.name}-${index}`}
+                  style={{
+                    fontSize: "12px",
+                    color: "var(--fg-dim)",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "6px",
+                  }}
+                >
+                  {file.name} ({formatSize(file.size)})
                   <button
                     type="button"
                     className="btn"
-                    style={{ fontSize: "11px", padding: "4px 8px" }}
-                    onClick={() => onFormFileChange(null)}
+                    style={{ fontSize: "11px", padding: "2px 6px" }}
+                    onClick={() =>
+                      onFormFilesChange(formFiles.filter((_, i) => i !== index))
+                    }
                   >
                     Remove
                   </button>
-                </>
+                </span>
+              ))}
+              {form.mode === "dynamic" && formFiles.length > 0 && (
+                <span style={{ fontSize: "11px", color: "var(--fg-dim)" }}>
+                  In the Dockerfile, COPY each file by its exact name.
+                </span>
               )}
             </div>
             <div
@@ -470,75 +604,118 @@ export default function ChallengesManagement({
         </thead>
         <tbody>
           {sortedData.map((c) => (
-            <tr key={c.id}>
-              <td style={{ fontWeight: 500 }}>{c.title}</td>
-              <td>{c.category}</td>
-              <td style={{ textAlign: "right" }}>{c.points}</td>
-              <td>{c.difficulty}</td>
-              <td style={{ textAlign: "right" }}>{c._count.submissions}</td>
-              <td>
-                <span
-                  style={{
-                    color: c.isActive ? "var(--success)" : "var(--danger)",
-                    fontSize: "12px",
-                  }}
-                >
-                  {c.isActive ? "Active" : "Inactive"}
-                </span>
-              </td>
-              <td>
-                {c.containerConfig ? (
+            <Fragment key={c.id}>
+              <tr>
+                <td style={{ fontWeight: 500 }}>{c.title}</td>
+                <td>{c.category}</td>
+                <td style={{ textAlign: "right" }}>{c.points}</td>
+                <td>{c.difficulty}</td>
+                <td style={{ textAlign: "right" }}>{c._count.submissions}</td>
+                <td>
                   <span
-                    title={c.containerConfig.imageDigest ?? undefined}
                     style={{
+                      color: c.isActive ? "var(--success)" : "var(--danger)",
                       fontSize: "12px",
-                      fontFamily: "var(--font-mono)",
-                      color:
-                        c.containerConfig.buildState === "READY"
-                          ? "var(--success)"
-                          : c.containerConfig.buildState === "FAILED"
-                            ? "var(--danger)"
-                            : "var(--fg-muted)",
                     }}
                   >
-                    {c.containerConfig.buildState}
+                    {c.isActive ? "Active" : "Inactive"}
                   </span>
-                ) : (
-                  <span style={{ fontSize: "12px", color: "var(--fg-dim)" }}>
-                    —
-                  </span>
-                )}
-              </td>
-              <td style={{ textAlign: "right" }}>
-                <button
-                  onClick={() => onToggleChallenge(c.id, c.isActive)}
-                  style={{
-                    background: "transparent",
-                    border: "none",
-                    color: "var(--fg-muted)",
-                    cursor: "pointer",
-                    fontSize: "12px",
-                    fontFamily: "var(--font-mono)",
-                    marginRight: "8px",
-                  }}
-                >
-                  {c.isActive ? "disable" : "enable"}
-                </button>
-                <button
-                  onClick={() => onDeleteChallenge(c.id, c.title)}
-                  style={{
-                    background: "transparent",
-                    border: "none",
-                    color: "var(--danger)",
-                    cursor: "pointer",
-                    fontSize: "12px",
-                    fontFamily: "var(--font-mono)",
-                  }}
-                >
-                  delete
-                </button>
-              </td>
-            </tr>
+                </td>
+                <td>
+                  {c.containerConfig ? (
+                    <span
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: "6px",
+                      }}
+                    >
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setExpandedId(expandedId === c.id ? null : c.id)
+                        }
+                        style={{
+                          background: "transparent",
+                          border: "none",
+                          color: "var(--fg-muted)",
+                          cursor: "pointer",
+                          fontSize: "12px",
+                          fontFamily: "var(--font-mono)",
+                          padding: 0,
+                        }}
+                        title="Manage files (build context)"
+                      >
+                        {expandedId === c.id ? "▾" : "▸"}
+                      </button>
+                      <span
+                        title={c.containerConfig.imageDigest ?? undefined}
+                        style={{
+                          fontSize: "12px",
+                          fontFamily: "var(--font-mono)",
+                          color:
+                            c.containerConfig.buildState === "READY"
+                              ? "var(--success)"
+                              : c.containerConfig.buildState === "FAILED"
+                                ? "var(--danger)"
+                                : "var(--fg-muted)",
+                        }}
+                      >
+                        {c.containerConfig.buildState}
+                      </span>
+                    </span>
+                  ) : (
+                    <span style={{ fontSize: "12px", color: "var(--fg-dim)" }}>
+                      —
+                    </span>
+                  )}
+                </td>
+                <td style={{ textAlign: "right" }}>
+                  <button
+                    onClick={() => onToggleChallenge(c.id, c.isActive)}
+                    style={{
+                      background: "transparent",
+                      border: "none",
+                      color: "var(--fg-muted)",
+                      cursor: "pointer",
+                      fontSize: "12px",
+                      fontFamily: "var(--font-mono)",
+                      marginRight: "8px",
+                    }}
+                  >
+                    {c.isActive ? "disable" : "enable"}
+                  </button>
+                  <button
+                    onClick={() => onDeleteChallenge(c.id, c.title)}
+                    style={{
+                      background: "transparent",
+                      border: "none",
+                      color: "var(--danger)",
+                      cursor: "pointer",
+                      fontSize: "12px",
+                      fontFamily: "var(--font-mono)",
+                    }}
+                  >
+                    delete
+                  </button>
+                </td>
+              </tr>
+              {c.containerConfig && expandedId === c.id && (
+                <tr>
+                  <td
+                    colSpan={8}
+                    style={{ background: "var(--bg-muted, transparent)" }}
+                  >
+                    <ChallengeFilesPanel
+                      challenge={c}
+                      uploading={uploadingId === c.id}
+                      onUploadFiles={onUploadFiles}
+                      onDeleteFile={onDeleteFile}
+                    />
+                  </td>
+                </tr>
+              )}
+            </Fragment>
           ))}
         </tbody>
       </table>

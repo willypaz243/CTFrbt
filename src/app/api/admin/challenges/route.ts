@@ -8,7 +8,7 @@ import { writeFile, mkdir, rm } from "fs/promises";
 import { existsSync } from "fs";
 import path from "path";
 import {
-  MAX_UPLOAD_BYTES,
+  checkUploadLimits,
   sanitizeUploadName,
   uploadDirFor,
 } from "@/lib/uploads";
@@ -65,7 +65,7 @@ export async function POST(request: Request) {
     const isMultipart = contentType.includes("multipart/form-data");
 
     let body: ChallengeCreateInput;
-    let upload: File | null = null;
+    let uploads: File[] = [];
 
     if (isMultipart) {
       const form = await request.formData();
@@ -83,8 +83,9 @@ export async function POST(request: Request) {
         difficulty: field("difficulty"),
         link: field("link"),
       };
-      const f = form.get("file");
-      if (f instanceof File) upload = f;
+      uploads = (form.getAll("file") as Array<File | string>).filter(
+        (f): f is File => f instanceof File,
+      );
       const hintsRaw = form.get("hints");
       if (typeof hintsRaw === "string" && hintsRaw.length > 0) {
         try {
@@ -208,40 +209,40 @@ export async function POST(request: Request) {
       include: { flags: true, hints: true },
     });
 
-    if (upload) {
-      if (upload.size > MAX_UPLOAD_BYTES) {
+    if (uploads.length > 0) {
+      const limitError = checkUploadLimits(uploads, 0, 0);
+      if (limitError) {
         await prisma.challenge.delete({ where: { id: challenge.id } });
-        return NextResponse.json(
-          { error: "File is too large (max 25 MB)" },
-          { status: 400 },
-        );
+        return NextResponse.json({ error: limitError }, { status: 400 });
       }
 
       const dir = uploadDirFor(challenge.id);
-      const cleanName = sanitizeUploadName(upload.name);
-      let storedName = cleanName;
-      const ext = path.extname(cleanName);
-      const base = path.basename(cleanName, ext);
-      let counter = 2;
-      while (existsSync(path.join(dir, storedName))) {
-        storedName = `${base}-${counter}${ext}`;
-        counter += 1;
-      }
 
       try {
         await mkdir(dir, { recursive: true });
-        await writeFile(
-          path.join(dir, storedName),
-          Buffer.from(await upload.arrayBuffer()),
-        );
-        await prisma.challengeFile.create({
-          data: {
-            name: upload.name,
-            path: `uploads/${challenge.id}/${storedName}`,
-            size: upload.size,
-            challengeId: challenge.id,
-          },
-        });
+        for (const upload of uploads) {
+          const cleanName = sanitizeUploadName(upload.name);
+          let storedName = cleanName;
+          const ext = path.extname(cleanName);
+          const base = path.basename(cleanName, ext);
+          let counter = 2;
+          while (existsSync(path.join(dir, storedName))) {
+            storedName = `${base}-${counter}${ext}`;
+            counter += 1;
+          }
+          await writeFile(
+            path.join(dir, storedName),
+            Buffer.from(await upload.arrayBuffer()),
+          );
+          await prisma.challengeFile.create({
+            data: {
+              name: upload.name,
+              path: `uploads/${challenge.id}/${storedName}`,
+              size: upload.size,
+              challengeId: challenge.id,
+            },
+          });
+        }
       } catch (uploadError) {
         await prisma.challenge
           .delete({ where: { id: challenge.id } })

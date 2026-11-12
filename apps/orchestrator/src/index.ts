@@ -3,6 +3,12 @@
  * to build challenge images. Stateless with respect to the CTF database:
  * the app sends what it needs and polls back build results.
  *
+ * POST /builds accepts either a JSON body ({ dockerfile, tag }) or a
+ * multipart/form-data body with `dockerfile`/`tag` fields and one file
+ * part per challenge file, where the *field name* is the flat name the
+ * Dockerfile must COPY. Files land in the build context next to the
+ * Dockerfile.
+ *
  * Auth: `Authorization: Bearer <ORCHESTRATOR_SECRET>` on every route
  * except /healthz. The service must not be reachable from outside the
  * compose network / localhost.
@@ -12,6 +18,7 @@ import {
   type IncomingMessage,
   type ServerResponse,
 } from "node:http";
+import type { Readable } from "node:stream";
 import { randomBytes } from "node:crypto";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { createReadStream } from "node:fs";
@@ -19,11 +26,16 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import Dockerode from "dockerode";
 import { create as createTar } from "tar";
+import busboy from "busboy";
 
 const PORT = Number(process.env.PORT ?? 7474);
 const HOST = process.env.HOST ?? "0.0.0.0";
 const SECRET = process.env.ORCHESTRATOR_SECRET ?? "";
 const SOCKET_PATH = process.env.DOCKER_SOCKET_PATH ?? "/var/run/docker.sock";
+
+const MAX_BUILD_FILE_BYTES = 25 * 1024 * 1024;
+const MAX_BUILD_FILES = 20;
+const MAX_FIELD_BYTES = 256 * 1024;
 
 if (!SECRET) {
   console.error(
@@ -87,7 +99,81 @@ async function readBody(req: IncomingMessage): Promise<string> {
   return Buffer.concat(chunks).toString("utf8");
 }
 
-async function runBuild(buildId: string, dockerfile: string, tag: string) {
+/**
+ * Flat, collision-safe name for a build context member. Spaces become
+ * underscores so COPY never needs quoting (buildah limitation).
+ */
+function sanitizeContextName(name: string): string {
+  const base = name.split(/[\\/]/).pop() ?? "";
+  return base.replace(/[^a-zA-Z0-9._-]/g, "_");
+}
+
+async function collectStream(stream: Readable): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of stream) chunks.push(chunk as Buffer);
+  return Buffer.concat(chunks);
+}
+
+function readMultipart(req: IncomingMessage): Promise<{
+  dockerfile: string;
+  tag: string;
+  files: Array<{ name: string; data: Buffer }>;
+}> {
+  return new Promise((resolve, reject) => {
+    const bb = busboy({
+      headers: req.headers,
+      limits: {
+        fileSize: MAX_BUILD_FILE_BYTES,
+        files: MAX_BUILD_FILES,
+      },
+    });
+    let dockerfile = "";
+    let tag = "";
+    const files: Array<{ name: string; data: Buffer }> = [];
+    const pending: Array<Promise<void>> = [];
+    bb.on("field", (name, value) => {
+      if (name === "dockerfile") dockerfile += value;
+      else if (name === "tag") tag += value;
+      if (dockerfile.length + tag.length > MAX_FIELD_BYTES) {
+        bb.destroy();
+        reject(new Error("field too large"));
+      }
+    });
+    bb.on("file", (name, stream) => {
+      const clean = sanitizeContextName(name);
+      if (!clean) {
+        stream.resume();
+        reject(new Error("invalid file name"));
+        return;
+      }
+      pending.push(
+        collectStream(stream).then((data) => {
+          files.push({ name: clean, data });
+        }),
+      );
+    });
+    bb.on("error", (err) => {
+      const e = err as Error & { fileLimit?: boolean; fileSize?: boolean };
+      if (e.fileLimit)
+        reject(new Error(`too many files (max ${MAX_BUILD_FILES})`));
+      else if (e.fileSize) reject(new Error("file too large (max 25 MB)"));
+      else reject(err);
+    });
+    bb.on("finish", () => {
+      Promise.all(pending)
+        .then(() => resolve({ dockerfile, tag, files }))
+        .catch(reject);
+    });
+    req.pipe(bb);
+  });
+}
+
+async function runBuild(
+  buildId: string,
+  dockerfile: string,
+  tag: string,
+  files: Array<{ name: string; data: Buffer }>,
+) {
   const build: BuildState = { id: buildId, tag, state: "BUILDING", log: "" };
   builds.set(buildId, build);
   const dir = path.join(tmpdir(), `ctfrbt-build-${buildId}`);
@@ -95,11 +181,16 @@ async function runBuild(buildId: string, dockerfile: string, tag: string) {
     await mkdir(dir, { recursive: true });
     const dfPath = path.join(dir, "Dockerfile");
     await writeFile(dfPath, dockerfile);
+    for (const file of files) {
+      await writeFile(path.join(dir, file.name), file.data);
+    }
     const tarPath = path.join(dir, "context.tar");
-    // Build context: the Dockerfile alone (no host files leak in).
-    // cwd makes the tar member "Dockerfile", which the engine expects.
+    // Build context: the Dockerfile plus the uploaded files (no host
+    // files leak in). cwd makes the members flat names, which the engine
+    // expects for COPY.
     await createTar({ file: tarPath, portable: true, cwd: dir }, [
       "Dockerfile",
+      ...files.map((f) => f.name),
     ]);
     const stream = createReadStream(tarPath);
     // dockerode resolves to a node PassThrough of JSON-line build events.
@@ -170,26 +261,63 @@ const server = createServer(async (req, res) => {
     }
 
     if (req.method === "POST" && url.pathname === "/builds") {
-      const raw = await readBody(req);
-      let body: { dockerfile?: string; tag?: string };
-      try {
-        body = JSON.parse(raw);
-      } catch {
-        send(res, 400, { error: "invalid JSON body" });
-        return;
+      const contentType = req.headers["content-type"] ?? "";
+      let dockerfile = "";
+      let tag = "";
+      let files: Array<{ name: string; data: Buffer }> = [];
+
+      if (contentType.includes("multipart/form-data")) {
+        let parsed: Awaited<ReturnType<typeof readMultipart>>;
+        try {
+          parsed = await readMultipart(req);
+        } catch (err) {
+          const message = (err as Error).message;
+          send(res, message.startsWith("file too large") ? 413 : 400, {
+            error: message,
+          });
+          return;
+        }
+        ({ dockerfile, tag, files } = parsed);
+      } else {
+        const raw = await readBody(req);
+        let body: { dockerfile?: string; tag?: string };
+        try {
+          body = JSON.parse(raw);
+        } catch {
+          send(res, 400, { error: "invalid JSON body" });
+          return;
+        }
+        dockerfile = body.dockerfile ?? "";
+        tag = body.tag ?? "";
       }
-      const { dockerfile, tag } = body;
-      if (typeof dockerfile !== "string" || dockerfile.trim().length === 0) {
+
+      if (dockerfile.trim().length === 0) {
         send(res, 400, { error: "dockerfile is required" });
         return;
       }
-      if (typeof tag !== "string" || !TAG_RE.test(tag) || tag.includes("..")) {
+      if (!TAG_RE.test(tag) || tag.includes("..")) {
         send(res, 400, { error: "invalid tag" });
         return;
       }
+      // De-duplicate context names (the app already sends unique stored
+      // names; this is defense in depth).
+      const seen = new Set<string>();
+      for (const file of files) {
+        let name = file.name;
+        const ext = path.extname(name);
+        const base = path.basename(name, ext);
+        let counter = 2;
+        while (seen.has(name)) {
+          name = `${base}-${counter}${ext}`;
+          counter += 1;
+        }
+        seen.add(name);
+        file.name = name;
+      }
+
       const id = randomBytes(8).toString("hex");
       // Fire-and-forget: the app polls GET /builds/:id.
-      void runBuild(id, dockerfile, tag);
+      void runBuild(id, dockerfile, tag, files);
       send(res, 202, { buildId: id });
       return;
     }

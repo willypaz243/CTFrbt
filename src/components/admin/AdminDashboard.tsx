@@ -42,11 +42,12 @@ export default function AdminDashboard() {
     dockerfile: "",
   });
   const [creating, setCreating] = useState(false);
-  const [formFile, setFormFile] = useState<File | null>(null);
+  const [formFiles, setFormFiles] = useState<File[]>([]);
   const [buildStatus, setBuildStatus] = useState<{
     state: string;
     log: string | null;
   } | null>(null);
+  const [uploadingId, setUploadingId] = useState<string | null>(null);
 
   const emptyForm: ChallengeForm = {
     title: "",
@@ -107,7 +108,7 @@ export default function AdminDashboard() {
     setCreating(true);
     try {
       let res: Response;
-      if (formFile) {
+      if (formFiles.length > 0) {
         const formData = new FormData();
         formData.append("title", form.title);
         formData.append("description", form.description);
@@ -119,7 +120,7 @@ export default function AdminDashboard() {
         if (form.hints.length > 0) {
           formData.append("hints", JSON.stringify(form.hints));
         }
-        formData.append("file", formFile);
+        for (const file of formFiles) formData.append("file", file);
         res = await fetch("/api/admin/challenges", {
           method: "POST",
           body: formData,
@@ -185,7 +186,7 @@ export default function AdminDashboard() {
       setShowForm(false);
       setForm(emptyForm);
       setBuildStatus(null);
-      setFormFile(null);
+      setFormFiles([]);
       loadChallenges();
     } catch {
       toast.error("Failed to create challenge");
@@ -229,6 +230,49 @@ export default function AdminDashboard() {
       toast.success("Challenge deleted");
     } catch {
       toast.error("Failed to delete challenge");
+    }
+  };
+
+  const uploadFiles = async (challengeId: string, files: File[]) => {
+    setUploadingId(challengeId);
+    try {
+      const formData = new FormData();
+      for (const file of files) formData.append("file", file);
+      const res = await fetch(`/api/admin/challenges/${challengeId}/files`, {
+        method: "POST",
+        body: formData,
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        toast.error(data.error || "Failed to upload files");
+        return;
+      }
+      loadChallenges();
+      toast.success(
+        files.length === 1 ? "File uploaded" : `${files.length} files uploaded`,
+      );
+    } catch {
+      toast.error("Failed to upload files");
+    } finally {
+      setUploadingId(null);
+    }
+  };
+
+  const deleteFile = async (challengeId: string, fileId: string) => {
+    try {
+      const res = await fetch(
+        `/api/admin/challenges/${challengeId}/files/${fileId}`,
+        { method: "DELETE" },
+      );
+      const data = await res.json();
+      if (!res.ok) {
+        toast.error(data.error || "Failed to delete file");
+        return;
+      }
+      loadChallenges();
+      toast.success("File deleted");
+    } catch {
+      toast.error("Failed to delete file");
     }
   };
 
@@ -454,16 +498,19 @@ export default function AdminDashboard() {
           challenges={challenges}
           showForm={showForm}
           form={form}
-          formFile={formFile}
+          formFiles={formFiles}
           creating={creating}
           buildStatus={buildStatus}
           categoryOptions={categoryOptions}
+          uploadingId={uploadingId}
           onToggleForm={() => setShowForm(!showForm)}
           onFormChange={setForm}
-          onFormFileChange={setFormFile}
+          onFormFilesChange={setFormFiles}
           onSubmit={createChallenge}
           onToggleChallenge={toggleChallenge}
           onDeleteChallenge={deleteChallenge}
+          onUploadFiles={uploadFiles}
+          onDeleteFile={deleteFile}
         />
       )}
 

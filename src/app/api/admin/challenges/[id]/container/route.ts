@@ -4,6 +4,9 @@ import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { validateDockerfile } from "@/lib/dockerfile";
 import { getBuild, startBuild } from "@/lib/orchestrator";
+import { readFile } from "fs/promises";
+import path from "path";
+import { PUBLIC_DIR, storedFileName } from "@/lib/uploads";
 
 interface ContainerConfigResponse {
   dockerfile: string;
@@ -11,6 +14,14 @@ interface ContainerConfigResponse {
   buildId: string | null;
   imageDigest: string | null;
   buildLog: string | null;
+}
+
+interface ChallengeFileInfo {
+  id: string;
+  name: string;
+  path: string;
+  size: number;
+  storedName: string;
 }
 
 function toResponse(config: {
@@ -75,7 +86,37 @@ export async function PUT(
     },
   });
 
-  const started = await startBuild(body.dockerfile as string, `ctfrbt/${id}`);
+  // Gather the challenge's uploaded files so the Dockerfile can COPY them.
+  const fileRows = await prisma.challengeFile.findMany({
+    where: { challengeId: id },
+  });
+  const buildFiles: Array<{ name: string; data: Buffer }> = [];
+  for (const row of fileRows) {
+    let data: Buffer;
+    try {
+      // row.path is stored relative to public/ (see the download route).
+      data = await readFile(path.join(PUBLIC_DIR, row.path));
+    } catch {
+      config = await prisma.containerConfig.update({
+        where: { challengeId: id },
+        data: {
+          buildState: "FAILED",
+          buildLog: `missing file on disk: ${row.name}`,
+        },
+      });
+      return NextResponse.json(
+        { config: toResponse(config), warnings: validation.warnings },
+        { status: 500 },
+      );
+    }
+    buildFiles.push({ name: storedFileName(row), data });
+  }
+
+  const started = await startBuild(
+    body.dockerfile as string,
+    `ctfrbt/${id}`,
+    buildFiles,
+  );
   if ("error" in started) {
     config = await prisma.containerConfig.update({
       where: { challengeId: id },
@@ -158,5 +199,16 @@ export async function GET(
   const fresh = await prisma.containerConfig.findUnique({
     where: { challengeId: id },
   });
-  return NextResponse.json({ config: toResponse(fresh!) });
+  const fileRows = await prisma.challengeFile.findMany({
+    where: { challengeId: id },
+    orderBy: { name: "asc" },
+  });
+  const files: ChallengeFileInfo[] = fileRows.map((row) => ({
+    id: row.id,
+    name: row.name,
+    path: row.path,
+    size: row.size,
+    storedName: storedFileName(row),
+  }));
+  return NextResponse.json({ config: toResponse(fresh!), files });
 }
