@@ -3,7 +3,12 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { validateDockerfile } from "@/lib/dockerfile";
-import { getBuild, startBuild } from "@/lib/orchestrator";
+import {
+  deleteInstance,
+  getBuild,
+  getInstance,
+  startBuild,
+} from "@/lib/orchestrator";
 import { readFile } from "fs/promises";
 import path from "path";
 import { PUBLIC_DIR, storedFileName } from "@/lib/uploads";
@@ -14,6 +19,10 @@ interface ContainerConfigResponse {
   buildId: string | null;
   imageDigest: string | null;
   buildLog: string | null;
+  testContainerId: string | null;
+  testState: string | null;
+  testAccessUrl: string | null;
+  testExpiresAt: string | null;
 }
 
 interface ChallengeFileInfo {
@@ -30,6 +39,10 @@ function toResponse(config: {
   buildId: string | null;
   imageDigest: string | null;
   buildLog: string | null;
+  testContainerId: string | null;
+  testState: string | null;
+  testAccessUrl: string | null;
+  testExpiresAt: Date | null;
 }): ContainerConfigResponse {
   return {
     dockerfile: config.dockerfile,
@@ -37,6 +50,10 @@ function toResponse(config: {
     buildId: config.buildId,
     imageDigest: config.imageDigest,
     buildLog: config.buildLog,
+    testContainerId: config.testContainerId,
+    testState: config.testState,
+    testAccessUrl: config.testAccessUrl,
+    testExpiresAt: config.testExpiresAt?.toISOString() ?? null,
   };
 }
 
@@ -191,6 +208,42 @@ export async function GET(
           buildState: "FAILED",
           imageDigest: null,
           buildLog: result.log.slice(-20_000),
+        },
+      });
+    }
+  }
+
+  // Reconcile the test instance: expired TTL, gone container, or exited.
+  if (
+    config.testContainerId &&
+    (config.testState === "STARTING" ||
+      config.testState === "RUNNING" ||
+      config.testState === "EXITED")
+  ) {
+    const expired =
+      config.testExpiresAt !== null && config.testExpiresAt < new Date();
+    const inst = expired ? null : await getInstance(config.testContainerId);
+    if (expired) {
+      await deleteInstance(config.testContainerId);
+      await prisma.containerConfig.update({
+        where: { challengeId: id },
+        data: {
+          testState: "EXPIRED",
+          testContainerId: null,
+          testAccessUrl: null,
+          testExpiresAt: null,
+        },
+      });
+    } else if (inst === null || inst.state === "EXITED") {
+      // Gone (or crashed): remove it — a test instance never lingers.
+      if (inst) await deleteInstance(config.testContainerId);
+      await prisma.containerConfig.update({
+        where: { challengeId: id },
+        data: {
+          testState: "STOPPED",
+          testContainerId: null,
+          testAccessUrl: null,
+          testExpiresAt: null,
         },
       });
     }

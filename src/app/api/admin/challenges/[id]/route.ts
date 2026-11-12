@@ -6,6 +6,7 @@ import { invalidate, CACHE_KEYS } from "@/lib/cache";
 import { isValidChallengeLink, isValidPoints } from "@/lib/validation";
 import { rm } from "fs/promises";
 import { uploadDirFor } from "@/lib/uploads";
+import { deleteInstance } from "@/lib/orchestrator";
 
 // PUT /api/admin/challenges/[id] — Update a challenge
 export async function PUT(
@@ -114,6 +115,15 @@ export async function DELETE(
         { error: "Challenge not found" },
         { status: 404 },
       );
+    }
+
+    // Remove a running test instance, if any (best effort).
+    const config = await prisma.containerConfig.findUnique({
+      where: { challengeId: id },
+      select: { testContainerId: true },
+    });
+    if (config?.testContainerId) {
+      await deleteInstance(config.testContainerId);
     }
 
     await prisma.challenge.delete({ where: { id } });

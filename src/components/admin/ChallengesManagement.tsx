@@ -9,6 +9,9 @@ export interface ChallengeContainerConfig {
   buildId: string | null;
   imageDigest: string | null;
   buildLog: string | null;
+  testState: string | null;
+  testAccessUrl: string | null;
+  testExpiresAt: string | null;
 }
 
 export interface ChallengeFileInfo {
@@ -64,6 +67,7 @@ interface ChallengesManagementProps {
   buildStatus: BuildStatus | null;
   categoryOptions: string[];
   uploadingId: string | null;
+  testBusyId: string | null;
   onToggleForm: () => void;
   onFormChange: (form: ChallengeForm) => void;
   onFormFilesChange: (files: File[]) => void;
@@ -72,6 +76,8 @@ interface ChallengesManagementProps {
   onDeleteChallenge: (id: string, title: string) => void;
   onUploadFiles: (challengeId: string, files: File[]) => void;
   onDeleteFile: (challengeId: string, fileId: string) => void;
+  onStartTest: (challengeId: string) => void;
+  onStopTest: (challengeId: string) => void;
 }
 
 function formatSize(bytes: number): string {
@@ -182,6 +188,123 @@ function ChallengeFilesPanel({
   );
 }
 
+/**
+ * Test instance controls for a dynamic challenge (admin-only): start a
+ * short-lived instance from the built image, show its access URL, stop it.
+ */
+function TestInstancePanel({
+  challenge,
+  busy,
+  onStartTest,
+  onStopTest,
+}: {
+  challenge: Challenge;
+  busy: boolean;
+  onStartTest: (challengeId: string) => void;
+  onStopTest: (challengeId: string) => void;
+}) {
+  const config = challenge.containerConfig!;
+  const running =
+    config.testState === "RUNNING" || config.testState === "STARTING";
+  const expires = config.testExpiresAt
+    ? new Date(config.testExpiresAt).toLocaleTimeString()
+    : null;
+  return (
+    <div
+      style={{
+        marginTop: "10px",
+        paddingTop: "8px",
+        borderTop: "1px solid var(--border, #333)",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: "8px",
+          fontSize: "12px",
+        }}
+      >
+        <span style={{ fontWeight: 600 }}>Test instance:</span>
+        {running ? (
+          <>
+            <span
+              style={{
+                color: "var(--success)",
+                fontFamily: "var(--font-mono)",
+              }}
+            >
+              {config.testState}
+            </span>
+            {config.testAccessUrl ? (
+              <a
+                href={config.testAccessUrl}
+                target="_blank"
+                rel="noreferrer"
+                style={{ fontFamily: "var(--font-mono)" }}
+              >
+                {config.testAccessUrl}
+              </a>
+            ) : (
+              <span style={{ color: "var(--fg-dim)" }}>no exposed ports</span>
+            )}
+            {expires && (
+              <span style={{ color: "var(--fg-dim)" }}>
+                (expires {expires})
+              </span>
+            )}
+            <button
+              type="button"
+              className="btn"
+              style={{
+                fontSize: "11px",
+                padding: "2px 6px",
+                marginLeft: "auto",
+              }}
+              disabled={busy}
+              onClick={() => onStopTest(challenge.id)}
+            >
+              {busy ? "Stopping..." : "Stop test"}
+            </button>
+          </>
+        ) : (
+          <>
+            {config.testState && (
+              <span
+                style={{
+                  color: "var(--fg-muted)",
+                  fontFamily: "var(--font-mono)",
+                }}
+              >
+                {config.testState}
+              </span>
+            )}
+            {config.buildState === "READY" ? (
+              <button
+                type="button"
+                className="btn"
+                style={{
+                  fontSize: "11px",
+                  padding: "2px 6px",
+                  marginLeft: "auto",
+                }}
+                disabled={busy}
+                onClick={() => onStartTest(challenge.id)}
+              >
+                {busy ? "Starting..." : "Start test"}
+              </button>
+            ) : (
+              <span style={{ color: "var(--fg-dim)", marginLeft: "auto" }}>
+                image not built
+              </span>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function ChallengesManagement({
   challenges,
   showForm,
@@ -191,6 +314,7 @@ export default function ChallengesManagement({
   buildStatus,
   categoryOptions,
   uploadingId,
+  testBusyId,
   onToggleForm,
   onFormChange,
   onFormFilesChange,
@@ -199,6 +323,8 @@ export default function ChallengesManagement({
   onDeleteChallenge,
   onUploadFiles,
   onDeleteFile,
+  onStartTest,
+  onStopTest,
 }: ChallengesManagementProps) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const sortAccessors = useMemo(
@@ -711,6 +837,12 @@ export default function ChallengesManagement({
                       uploading={uploadingId === c.id}
                       onUploadFiles={onUploadFiles}
                       onDeleteFile={onDeleteFile}
+                    />
+                    <TestInstancePanel
+                      challenge={c}
+                      busy={testBusyId === c.id}
+                      onStartTest={onStartTest}
+                      onStopTest={onStopTest}
                     />
                   </td>
                 </tr>

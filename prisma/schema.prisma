@@ -87,9 +87,14 @@ model ContainerConfig {
   buildId     String?   /// id del build en el orquestador
   imageDigest String?
   buildLog    String?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-  challenge   Challenge @relation(fields: [challengeId], references: [id], onDelete: Cascade)
+  // Instancia de prueba (solo admin, #3): a lo sumo una por reto.
+  testContainerId String?  /// nombre/id del contenedor en el orquestador
+  testState       String?  /// STARTING | RUNNING | STOPPED | EXPIRED | FAILED
+  testAccessUrl   String?  /// dirección principal de acceso (puerto publicado)
+  testExpiresAt   DateTime? /// TTL corto; al expirar se detiene y elimina
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  challenge       Challenge @relation(fields: [challengeId], references: [id], onDelete: Cascade)
 }
 
 model ChallengeFlag {

@@ -48,6 +48,7 @@ export default function AdminDashboard() {
     log: string | null;
   } | null>(null);
   const [uploadingId, setUploadingId] = useState<string | null>(null);
+  const [testBusyId, setTestBusyId] = useState<string | null>(null);
 
   const emptyForm: ChallengeForm = {
     title: "",
@@ -273,6 +274,52 @@ export default function AdminDashboard() {
       toast.success("File deleted");
     } catch {
       toast.error("Failed to delete file");
+    }
+  };
+
+  const startTest = async (challengeId: string) => {
+    setTestBusyId(challengeId);
+    try {
+      const res = await fetch(
+        `/api/admin/challenges/${challengeId}/test-instance`,
+        { method: "POST" },
+      );
+      const data = await res.json();
+      if (!res.ok) {
+        toast.error(data.error || "Failed to start test instance");
+        return;
+      }
+      loadChallenges();
+      toast.success(
+        data.config.testAccessUrl
+          ? `Test instance running at ${data.config.testAccessUrl}`
+          : "Test instance started",
+      );
+    } catch {
+      toast.error("Failed to start test instance");
+    } finally {
+      setTestBusyId(null);
+    }
+  };
+
+  const stopTest = async (challengeId: string) => {
+    setTestBusyId(challengeId);
+    try {
+      const res = await fetch(
+        `/api/admin/challenges/${challengeId}/test-instance`,
+        { method: "DELETE" },
+      );
+      const data = await res.json();
+      if (!res.ok) {
+        toast.error(data.error || "Failed to stop test instance");
+        return;
+      }
+      loadChallenges();
+      toast.success("Test instance stopped");
+    } catch {
+      toast.error("Failed to stop test instance");
+    } finally {
+      setTestBusyId(null);
     }
   };
 
@@ -503,6 +550,7 @@ export default function AdminDashboard() {
           buildStatus={buildStatus}
           categoryOptions={categoryOptions}
           uploadingId={uploadingId}
+          testBusyId={testBusyId}
           onToggleForm={() => setShowForm(!showForm)}
           onFormChange={setForm}
           onFormFilesChange={setFormFiles}
@@ -511,6 +559,8 @@ export default function AdminDashboard() {
           onDeleteChallenge={deleteChallenge}
           onUploadFiles={uploadFiles}
           onDeleteFile={deleteFile}
+          onStartTest={startTest}
+          onStopTest={stopTest}
         />
       )}
 

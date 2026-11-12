@@ -78,6 +78,142 @@ function pruneBuilds() {
 }
 
 const TAG_RE = /^[a-z0-9][a-z0-9._/-]*$/i;
+const INSTANCE_NAME_RE = /^ctfrbt-[a-z0-9]+(-[a-z0-9]+)*$/;
+const ENV_KEY_RE = /^[A-Z_][A-Z0-9_]*$/;
+const LABEL_PART_RE = /^[a-zA-Z0-9._-]{1,64}$/;
+
+// --- Instance helpers (stateless: inspect via the engine per request) ---
+
+interface InstanceRoute {
+  containerPort: number;
+  hostPort: number;
+  protocol: string;
+}
+
+interface InstanceInfo {
+  containerId: string;
+  name: string;
+  state: "RUNNING" | "EXITED";
+  routes: InstanceRoute[];
+}
+
+async function inspectInstance(name: string): Promise<InstanceInfo | null> {
+  const container = docker!.getContainer(name);
+  const info = await container.inspect();
+  const routes: InstanceRoute[] = [];
+  for (const [key, bindings] of Object.entries(info.NetworkSettings.Ports)) {
+    if (!bindings?.length) continue;
+    const [containerPort, protocol] = key.split("/");
+    routes.push({
+      containerPort: Number(containerPort),
+      hostPort: Number(bindings[0].HostPort),
+      protocol: protocol || "tcp",
+    });
+  }
+  return {
+    containerId: name,
+    name: info.Name.replace(/^\//, ""),
+    state: info.State.Running ? "RUNNING" : "EXITED",
+    routes,
+  };
+}
+
+async function removeInstance(name: string): Promise<boolean> {
+  try {
+    const container = docker!.getContainer(name);
+    await container.stop({ t: 5 }).catch(() => {});
+    await container.remove({ force: true });
+    // The per-instance network follows the container name (<name>-net).
+    await docker!
+      .getNetwork(`${name}-net`)
+      .remove()
+      .catch(() => {});
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function createInstance(body: {
+  image: string;
+  name: string;
+  env?: Record<string, string>;
+  labels?: Record<string, string>;
+  memoryLimitMb?: number;
+  cpuLimit?: string;
+}): Promise<InstanceInfo | { error: string }> {
+  const { image, name } = body;
+  if (!TAG_RE.test(image) || image.includes(".."))
+    return { error: "invalid image" };
+  if (!INSTANCE_NAME_RE.test(name)) return { error: "invalid name" };
+  const env = body.env ?? {};
+  const entries = Object.entries(env);
+  if (entries.length > 20) return { error: "too many env entries" };
+  for (const [k, v] of entries) {
+    if (!ENV_KEY_RE.test(k) || v.length > 512)
+      return { error: "invalid env entry" };
+  }
+  const labels = { ...(body.labels ?? {}) };
+  for (const [k, v] of Object.entries(labels)) {
+    if (!LABEL_PART_RE.test(k) || !LABEL_PART_RE.test(v))
+      return { error: "invalid label" };
+  }
+  labels["ctfrbt.managed"] = "true";
+
+  const memoryMb = Math.min(Math.max(body.memoryLimitMb ?? 256, 16), 8192);
+  const cpu = Number(body.cpuLimit ?? "0.50") || 0.5;
+  const cpuCores = Math.min(Math.max(cpu, 0.1), 8);
+
+  const networkName = `${name}-net`;
+  // A stale network with the same (random) name would block creation;
+  // reuse it if it exists.
+  try {
+    await docker!
+      .getNetwork(networkName)
+      .inspect()
+      .catch(async () => {
+        throw new Error("missing");
+      });
+  } catch {
+    try {
+      await docker!.createNetwork({ Name: networkName, Driver: "bridge" });
+    } catch (err) {
+      // 409 (already exists) is acceptable; anything else is not.
+      if (!(err as Error).message?.includes("409"))
+        return { error: `cannot create network: ${(err as Error).message}` };
+    }
+  }
+
+  try {
+    const img = docker!.getImage(image);
+    const imgInfo = await img.inspect();
+    const exposed: string[] = Object.keys(imgInfo.Config.ExposedPorts ?? {});
+
+    const container = await docker!.createContainer({
+      Image: image,
+      name,
+      Env: entries.map(([k, v]) => `${k}=${v}`),
+      Labels: labels,
+      ExposedPorts: Object.fromEntries(exposed.map((p) => [p, {}])),
+      HostConfig: {
+        Memory: memoryMb * 1024 * 1024,
+        CpuQuota: Math.round(cpuCores * 100_000),
+        CpuPeriod: 100_000,
+        PidsLimit: 64,
+        SecurityOpt: ["no-new-privileges"],
+        NetworkMode: networkName,
+        // Publish every port the image exposes, on random host ports.
+        PublishAllPorts: true,
+      },
+    });
+    await container.start();
+    return (await inspectInstance(name))!;
+  } catch (err) {
+    // Best-effort cleanup of the half-created instance.
+    await removeInstance(name);
+    return { error: (err as Error).message };
+  }
+}
 
 function send(res: ServerResponse, status: number, body: unknown) {
   const data = JSON.stringify(body);
@@ -319,6 +455,88 @@ const server = createServer(async (req, res) => {
       // Fire-and-forget: the app polls GET /builds/:id.
       void runBuild(id, dockerfile, tag, files);
       send(res, 202, { buildId: id });
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/instances") {
+      const raw = await readBody(req);
+      let body: {
+        image?: string;
+        name?: string;
+        env?: Record<string, string>;
+        labels?: Record<string, string>;
+        memoryLimitMb?: number;
+        cpuLimit?: string;
+      };
+      try {
+        body = JSON.parse(raw);
+      } catch {
+        send(res, 400, { error: "invalid JSON body" });
+        return;
+      }
+      const { image, name, env, labels, memoryLimitMb, cpuLimit } = body;
+      if (!image || !name) {
+        send(res, 400, { error: "image and name are required" });
+        return;
+      }
+      const result = await createInstance({
+        image,
+        name,
+        env,
+        labels,
+        memoryLimitMb,
+        cpuLimit,
+      });
+      if ("error" in result) {
+        send(res, 502, { error: result.error });
+        return;
+      }
+      send(res, 201, result);
+      return;
+    }
+
+    const instMatch = url.pathname.match(/^\/instances\/([a-zA-Z0-9._-]+)$/);
+    if (instMatch) {
+      const name = instMatch[1];
+      if (req.method === "GET") {
+        try {
+          const info = await inspectInstance(name);
+          if (!info) send(res, 404, { error: "instance not found" });
+          else send(res, 200, info);
+        } catch {
+          send(res, 404, { error: "instance not found" });
+        }
+        return;
+      }
+      if (req.method === "POST" && url.pathname === `/instances/${name}/stop`) {
+        try {
+          await docker!.getContainer(name).stop({ t: 5 });
+          send(res, 200, { stopped: true });
+        } catch {
+          send(res, 404, { error: "instance not found" });
+        }
+        return;
+      }
+      if (req.method === "DELETE") {
+        const removed = await removeInstance(name);
+        send(res, removed ? 200 : 404, { removed });
+        return;
+      }
+    }
+
+    if (req.method === "GET" && url.pathname === "/instances") {
+      const list = await docker!.listContainers({
+        all: true,
+        filters: { label: ["ctfrbt.managed=true"] },
+      });
+      send(res, 200, {
+        instances: list.map((c) => ({
+          containerId: c.Id,
+          name: (c.Names ?? [])[0]?.replace(/^\//, "") ?? c.Id,
+          state: c.State,
+          labels: c.Labels ?? {},
+        })),
+      });
       return;
     }
 

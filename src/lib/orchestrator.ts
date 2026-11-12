@@ -83,6 +83,89 @@ export async function startBuild(
   }
 }
 
+export interface InstanceRoute {
+  containerPort: number;
+  hostPort: number;
+  protocol: string;
+}
+
+export interface OrchestratorInstance {
+  containerId: string;
+  name: string;
+  state: "RUNNING" | "EXITED";
+  routes: InstanceRoute[];
+}
+
+export interface StartInstanceOptions {
+  image: string;
+  name: string;
+  env?: Record<string, string>;
+  labels?: Record<string, string>;
+  memoryLimitMb?: number;
+  cpuLimit?: string;
+}
+
+export async function startInstance(
+  opts: StartInstanceOptions,
+): Promise<OrchestratorInstance | { error: string }> {
+  try {
+    const res = await fetch(`${ORCHESTRATOR_URL}/instances`, {
+      method: "POST",
+      headers: headers(),
+      body: JSON.stringify(opts),
+      cache: "no-store",
+    });
+    const body = (await res.json()) as OrchestratorInstance & {
+      error?: string;
+    };
+    if (!res.ok || !body.containerId) {
+      return { error: body.error ?? `orchestrator returned ${res.status}` };
+    }
+    return body;
+  } catch (err) {
+    return { error: `orchestrator unreachable: ${(err as Error).message}` };
+  }
+}
+
+export async function getInstance(
+  containerId: string,
+): Promise<OrchestratorInstance | null> {
+  try {
+    const res = await fetch(
+      `${ORCHESTRATOR_URL}/instances/${encodeURIComponent(containerId)}`,
+      { headers: headers(), cache: "no-store" },
+    );
+    if (!res.ok) return null;
+    return (await res.json()) as OrchestratorInstance;
+  } catch {
+    return null;
+  }
+}
+
+export async function stopInstance(containerId: string): Promise<boolean> {
+  try {
+    const res = await fetch(
+      `${ORCHESTRATOR_URL}/instances/${encodeURIComponent(containerId)}/stop`,
+      { method: "POST", headers: headers(), cache: "no-store" },
+    );
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+export async function deleteInstance(containerId: string): Promise<boolean> {
+  try {
+    const res = await fetch(
+      `${ORCHESTRATOR_URL}/instances/${encodeURIComponent(containerId)}`,
+      { method: "DELETE", headers: headers(), cache: "no-store" },
+    );
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
 export async function getBuild(
   buildId: string,
 ): Promise<OrchestratorBuildResult | null> {
