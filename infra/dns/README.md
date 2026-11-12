@@ -29,21 +29,48 @@ dig +short google.com @192.168.0.10 -p 5354 | head -3        # ips reales (reenv
 journalctl --user -u ctfrbt-dns.service -n 20                 # logs
 ```
 
-## Agregarlo a la red (esta máquina, NetworkManager)
+## Agregarlo a la red (esta máquina)
+
+**Dato duro:** rootless no puede bindear 53 **ni a localhost** (es restricción
+de puerto <1024, no de interfaz; `ip_unprivileged_port_start=1024`). Y
+**NetworkManager 1.58 rechaza `IP:puerto` en `ipv4.dns`** ("DNS server address
+is invalid") salvo con resolvedor stub interno. Tres opciones:
+
+**A) sysctl de una sola línea (recomendada — habilita 53 raíz real y toda la LAN):**
 
 ```bash
-nmcli connection modify "Static connection" \
-  ipv4.dns "192.168.0.10:5354 192.168.0.53" ipv4.dns-priority 50
+echo 'net.ipv4.ip_unprivileged_port_start=53' | sudo tee /etc/sysctl.d/60-unprivileged-ports.conf
+sudo sysctl --system
+sed -i 's/^Environment=DNSMASQ_INTERFACE=/&/' infra/dns/ctfrbt-dns.container   # sin cambios
+# en el quadlet: PublishPort=0.0.0.0:5354 -> 0.0.0.0:53 (y en README/story)
+systemctl --user daemon-reload && systemctl --user restart ctfrbt-dns.service
+nmcli connection modify "Static connection" ipv4.dns "192.168.0.10 192.168.0.53" ipv4.dns-priority 50
 nmcli connection up "Static connection"
 ```
 
-(En la GUI de NetworkManager: IPv4 → DNS `192.168.0.10:5354;192.168.0.53`.)
+Con esto el router también puede repartir `192.168.0.10` por DHCP a toda la
+LAN (option 6 estándar). Contrapartida: cualquier proceso del usuario podrá
+bindear puertos ≥53 (aceptable en dev).
 
-Limitación del esquema con puerto: la opción 6 del DHCP del router **no
-transporta puerto**, así que no se reparte a toda la LAN automáticamente;
-cada dispositivo que quiera usarlo lo pone en su configuración (Linux
-resuelve `IP:puerto`; Windows no soporta DNS en puerto alto → para prod se
-usa el dominio real con TLS, historia #14).
+**B) Resolvedor interno de NM (`dns=full`, stub en 127.0.0.53:53 con root de NM):**
+
+```bash
+sudo mkdir -p /etc/NetworkManager/conf.d && printf '[main]\ndns=full\n' | sudo tee /etc/NetworkManager/conf.d/10-dns-full.conf
+sudo systemctl restart NetworkManager
+nmcli connection modify "Static connection" ipv4.dns "server:192.168.0.10:5354" ipv4.dns-priority 50
+nmcli connection modify "Static connection" ipv4.dns-searches "inst.ctfrbt.home.arpa"
+nmcli connection up "Static connection"
+```
+
+Solo para esta máquina (resolv.conf → 127.0.0.53); sin=sysctl. La ruta por
+dominio (`inst.ctfrbt.home.arpa` → servidor:5354) exige el stub full.
+
+**C) systemd-resolved (inactivo aquí):** habilitarlo + drop-in
+`DNS=192.168.0.10:5354`, `Domains=inst.ctfrbt.home.arpa` (mismo efecto B,
+más componentes; sudo).
+
+Con A: `nmcli ... ipv4.dns "192.168.0.10 192.168.0.53"` (sin puerto). Con B/C:
+UI de red normal (127.0.0.53 lo gestiona NM/resolved).
 
 ## App (dev)
 
