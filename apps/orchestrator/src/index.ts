@@ -37,6 +37,15 @@ const MAX_BUILD_FILE_BYTES = 25 * 1024 * 1024;
 const MAX_BUILD_FILES = 20;
 const MAX_FIELD_BYTES = 256 * 1024;
 
+// --- Gateway (Traefik file provider) -----------------------------------
+// Each running instance gets one dynamic route entry
+// (Host(`<token>.inst.<domain>`) -> container) written to a shared
+// directory the gateway watches. The gateway container is connected to
+// the per-instance network so it can reach the container without any
+// published port.
+const GATEWAY_DIR = process.env.GATEWAY_DIR ?? "/etc/traefik/dynamic";
+const GATEWAY_CONTAINER = process.env.GATEWAY_CONTAINER ?? "ctfrbt-gateway";
+
 if (!SECRET) {
   console.error(
     "orchestrator: ORCHESTRATOR_SECRET is required — refusing to start.",
@@ -118,16 +127,44 @@ async function inspectInstance(name: string): Promise<InstanceInfo | null> {
   };
 }
 
+/** Writes (or overwrites) the gateway route entry for an instance. */
+async function writeGatewayRoute(
+  name: string,
+  host: string,
+  containerPort: number,
+): Promise<void> {
+  try {
+    await mkdir(GATEWAY_DIR, { recursive: true });
+    const yaml = [
+      "http:",
+      "  routers:",
+      `    ${name}:`,
+      `      rule: Host(\`${host}\`)`,
+      `      service: ${name}`,
+      "  services:",
+      `    ${name}:`,
+      "      loadBalancer:",
+      "        servers:",
+      `          - url: http://${name}:${containerPort}`,
+      "",
+    ].join("\n");
+    await writeFile(`${GATEWAY_DIR}/${name}.yml`, yaml);
+  } catch (err) {
+    console.error(`orchestrator: cannot write gateway route for ${name}:`, err);
+  }
+}
+
 async function removeInstance(name: string): Promise<boolean> {
   try {
     const container = docker!.getContainer(name);
     await container.stop({ t: 5 }).catch(() => {});
     await container.remove({ force: true });
+    // Kill the gateway route before the network goes away.
+    await rm(`${GATEWAY_DIR}/${name}.yml`, { force: true }).catch(() => {});
+    const network = docker!.getNetwork(`${name}-net`);
+    await network.disconnect({ Container: GATEWAY_CONTAINER }).catch(() => {});
     // The per-instance network follows the container name (<name>-net).
-    await docker!
-      .getNetwork(`${name}-net`)
-      .remove()
-      .catch(() => {});
+    await network.remove().catch(() => {});
     return true;
   } catch {
     return false;
@@ -141,6 +178,8 @@ async function createInstance(body: {
   labels?: Record<string, string>;
   memoryLimitMb?: number;
   cpuLimit?: string;
+  /** Full subdomain the gateway should route to this instance. */
+  gatewayHost?: string;
 }): Promise<InstanceInfo | { error: string }> {
   const { image, name } = body;
   if (!TAG_RE.test(image) || image.includes(".."))
@@ -176,7 +215,13 @@ async function createInstance(body: {
       });
   } catch {
     try {
-      await docker!.createNetwork({ Name: networkName, Driver: "bridge" });
+      // icc=false: no inter-container traffic on the bridge — the only way
+      // in is the gateway (or a published port for test instances).
+      await docker!.createNetwork({
+        Name: networkName,
+        Driver: "bridge",
+        Options: { icc: "false" },
+      });
     } catch (err) {
       // 409 (already exists) is acceptable; anything else is not.
       if (!(err as Error).message?.includes("409"))
@@ -202,11 +247,34 @@ async function createInstance(body: {
         PidsLimit: 64,
         SecurityOpt: ["no-new-privileges"],
         NetworkMode: networkName,
-        // Publish every port the image exposes, on random host ports.
-        PublishAllPorts: true,
+        // Test instances (no gatewayHost) publish every exposed port on a
+        // random host port. Game instances (gatewayHost set) are reachable
+        // ONLY through the gateway — no host ports.
+        PublishAllPorts: !body.gatewayHost,
       },
     });
     await container.start();
+
+    // Gateway registration (best effort): connect the gateway container
+    // to the instance network, then write the dynamic route entry
+    // (Host(`<gatewayHost>`) -> container:port).
+    if (body.gatewayHost) {
+      try {
+        await docker!
+          .getNetwork(networkName)
+          .connect({ Container: GATEWAY_CONTAINER });
+        const first = exposed[0];
+        if (first) {
+          const port = Number(first.split("/")[0]);
+          if (Number.isInteger(port) && port > 0) {
+            await writeGatewayRoute(name, body.gatewayHost, port);
+          }
+        }
+      } catch (err) {
+        console.error(`orchestrator: gateway setup failed for ${name}:`, err);
+      }
+    }
+
     return (await inspectInstance(name))!;
   } catch (err) {
     // Best-effort cleanup of the half-created instance.
@@ -467,6 +535,7 @@ const server = createServer(async (req, res) => {
         labels?: Record<string, string>;
         memoryLimitMb?: number;
         cpuLimit?: string;
+        gatewayHost?: string;
       };
       try {
         body = JSON.parse(raw);
@@ -474,7 +543,8 @@ const server = createServer(async (req, res) => {
         send(res, 400, { error: "invalid JSON body" });
         return;
       }
-      const { image, name, env, labels, memoryLimitMb, cpuLimit } = body;
+      const { image, name, env, labels, memoryLimitMb, cpuLimit, gatewayHost } =
+        body;
       if (!image || !name) {
         send(res, 400, { error: "image and name are required" });
         return;
@@ -486,6 +556,7 @@ const server = createServer(async (req, res) => {
         labels,
         memoryLimitMb,
         cpuLimit,
+        gatewayHost,
       });
       if ("error" in result) {
         send(res, 502, { error: result.error });

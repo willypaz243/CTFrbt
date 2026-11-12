@@ -45,6 +45,7 @@ model Team {
   teamHints    TeamHint[]
   activityLogs ActivityLog[]
   pointHistory TeamPointHistory[]
+  instances    ChallengeInstance[]
 }
 
 // ============================================
@@ -73,6 +74,7 @@ model Challenge {
   scores           Score[]
   unlockConditions UnlockCondition[]
   containerConfig  ContainerConfig?
+  instances        ChallengeInstance[]
 
   @@index([category])
   @@index([isActive])
@@ -100,6 +102,33 @@ model ContainerConfig {
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
   challenge       Challenge @relation(fields: [challengeId], references: [id], onDelete: Cascade)
+}
+
+/// Una por (reto, equipo): la instancia viva del reto dinámico del equipo (#5).
+/// El token se regenera en cada arranque (ruta no enumerable, vieja muere).
+model ChallengeInstance {
+  id          String    @id @default(cuid())
+  challengeId String
+  teamId      String
+  state       String    @default("NOT_STARTED") /// NOT_STARTED | STARTING | RUNNING | STOPPED | EXPIRED | FAILED
+  containerId String?   /// nombre del contenedor en el orquestador
+  imageDigest String?   /// digest de la imagen en uso
+  token       String?   /// subdominio aleatorio (re-emitido en cada start)
+  accessUrl   String?   /// <scheme>://<token>.inst.<dominio>/
+  terminalUrl String?
+  vpnIp       String?
+  portMap     Json?
+  expiresAt   DateTime?
+  startCount  Int       @default(0)
+  lastLog     String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  challenge   Challenge @relation(fields: [challengeId], references: [id], onDelete: Cascade)
+  team        Team      @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  @@unique([challengeId, teamId])
+  @@index([state])
+  @@index([expiresAt])
 }
 
 model ChallengeFlag {

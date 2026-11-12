@@ -14,6 +14,8 @@ services:
       NEXTAUTH_URL: ${NEXTAUTH_URL:-http://localhost:3000}
       ORCHESTRATOR_URL: http://orchestrator:7474
       ORCHESTRATOR_SECRET: ${ORCHESTRATOR_SECRET:-change-this-to-a-random-secret}
+      GATEWAY_DOMAIN: ${GATEWAY_DOMAIN:-inst.ctfrbt.local}
+      GATEWAY_SCHEME: ${GATEWAY_SCHEME:-http}
     depends_on:
       postgres:
         condition: service_healthy
@@ -38,8 +40,28 @@ services:
     environment:
       ORCHESTRATOR_SECRET: ${ORCHESTRATOR_SECRET:-change-this-to-a-random-secret}
       DOCKER_SOCKET_PATH: ${DOCKER_SOCKET_PATH:-/var/run/docker.sock}
+      GATEWAY_DIR: /etc/traefik/dynamic
+      GATEWAY_CONTAINER: ctfrbt-gateway
     volumes:
       - ${DOCKER_SOCKET_PATH:-/var/run/docker.sock}:${DOCKER_SOCKET_PATH:-/var/run/docker.sock}
+      - gateway_data:/etc/traefik/dynamic
+
+  # Web gateway (#5): routes the wildcard subdomains
+  # (<token>.inst.<domain>) to the running instance containers.
+  # The orchestrator writes one dynamic entry per instance into the
+  # shared volume and connects this container to each instance network.
+  gateway:
+    image: traefik:v3.1
+    container_name: ctfrbt-gateway
+    restart: unless-stopped
+    command:
+      - --entrypoints.web.address=:80
+      - --providers.file.directory=/etc/traefik/dynamic
+      - --providers.file.watch=true
+    ports:
+      - "8088:80"
+    volumes:
+      - gateway_data:/etc/traefik/dynamic
 
   postgres:
     image: postgres:18.4-alpine
@@ -80,3 +102,4 @@ services:
 volumes:
   pgdata:
   uploads_data:
+  gateway_data:

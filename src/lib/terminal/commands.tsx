@@ -348,6 +348,7 @@ export const COMMAND_REGISTRY: Record<string, CommandHandler> = {
       try {
         const data = (await fetchCached("/api/challenges")) as {
           challengesByCategory: Record<string, ChallengeData[]>;
+          hasTeam?: boolean;
         };
         const allChallenges = Object.values(data.challengesByCategory).flat();
         const challenge = allChallenges.find((c) => c.id === challengeId);
@@ -361,9 +362,13 @@ export const COMMAND_REGISTRY: Record<string, CommandHandler> = {
           <div style={{ margin: "16px 0" }}>
             <ChallengeView
               challenge={challenge}
+              hasTeam={data.hasTeam}
               onSolved={() => {
                 invalidateCache("/api/challenges");
                 invalidateCache("/api/leaderboard");
+              }}
+              onInstanceChanged={() => {
+                invalidateCache("/api/challenges");
               }}
             />
           </div>,

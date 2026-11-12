@@ -1,8 +1,16 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import toast from "react-hot-toast";
-import { FiDownload, FiLock, FiCheck, FiHelpCircle } from "react-icons/fi";
+import {
+  FiDownload,
+  FiLock,
+  FiCheck,
+  FiHelpCircle,
+  FiPlay,
+  FiSquare,
+  FiExternalLink,
+} from "react-icons/fi";
 
 export interface ChallengeFile {
   id: string;
@@ -23,6 +31,15 @@ export interface FlagData {
   isSolved: boolean;
 }
 
+/** The team's instance of a dynamic challenge (#5), if any. */
+export interface InstanceData {
+  state: string; // NOT_STARTED | STARTING | RUNNING | STOPPED | EXPIRED | FAILED
+  accessUrl: string | null;
+  expiresAt: string | null;
+  startCount: number;
+  lastLog?: string | null;
+}
+
 export interface ChallengeData {
   id: string;
   title: string;
@@ -36,16 +53,231 @@ export interface ChallengeData {
   multipleFlags: boolean;
   link: string | null;
   files: ChallengeFile[];
+  // Dynamic challenge (#5): absent/undefined on static challenges.
+  isDynamic?: boolean;
+  buildState?: string | null;
+  instance?: InstanceData | null;
   hintCount: number;
   flags: FlagData[];
+}
+
+/**
+ * Team instance controls for a dynamic challenge (#5): start the team's
+ * container, see its state and access URL, stop it. One per team.
+ */
+function InstancePanel({
+  challenge,
+  onRefresh,
+}: {
+  challenge: ChallengeData;
+  onRefresh: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [live, setLive] = useState(challenge.instance ?? null);
+
+  // Poll while the instance is starting (the container takes a moment).
+  const polling = live?.state === "STARTING";
+  const poll = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/challenges/${challenge.id}/instance`);
+      if (res.ok) {
+        const data = (await res.json()) as { instance: InstanceData };
+        setLive(data.instance);
+      }
+    } catch {
+      /* keep the previous state */
+    }
+  }, [challenge.id]);
+
+  useEffect(() => {
+    if (!polling) return;
+    const timer = setInterval(poll, 2000);
+    return () => clearInterval(timer);
+  }, [polling, poll]);
+
+  useEffect(() => {
+    setLive(challenge.instance ?? null);
+  }, [challenge.instance]);
+
+  const start = async () => {
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/challenges/${challenge.id}/instance`, {
+        method: "POST",
+      });
+      const data = (await res.json()) as {
+        instance?: InstanceData;
+        error?: string;
+      };
+      if (!res.ok) {
+        toast.error(data.error || "Failed to start instance");
+        return;
+      }
+      setLive(data.instance ?? null);
+      toast.success("Instance starting");
+      onRefresh();
+    } catch {
+      toast.error("Network error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const stop = async () => {
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/challenges/${challenge.id}/instance`, {
+        method: "DELETE",
+      });
+      const data = (await res.json()) as {
+        instance?: InstanceData;
+        error?: string;
+      };
+      if (!res.ok) {
+        toast.error(data.error || "Failed to stop instance");
+        return;
+      }
+      setLive(data.instance ?? null);
+      toast.success("Instance stopped");
+      onRefresh();
+    } catch {
+      toast.error("Network error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const imageReady = challenge.buildState === "READY";
+  const state = live?.state ?? "NOT_STARTED";
+  const running = state === "RUNNING";
+
+  return (
+    <div
+      style={{
+        marginBottom: "24px",
+        padding: "12px",
+        border: "1px solid var(--border)",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: "10px",
+          flexWrap: "wrap",
+        }}
+      >
+        <span
+          style={{
+            fontSize: "12px",
+            fontWeight: 600,
+            textTransform: "uppercase",
+            letterSpacing: "1px",
+            color: "var(--fg-dim)",
+          }}
+        >
+          Your instance
+        </span>
+        <span
+          style={{
+            fontSize: "12px",
+            fontFamily: "var(--font-mono)",
+            color: running
+              ? "var(--success)"
+              : state === "FAILED"
+                ? "var(--danger)"
+                : "var(--fg-muted)",
+          }}
+        >
+          {state.toLowerCase().replace("_", " ")}
+          {live && live.startCount > 1 && ` (start #${live.startCount})`}
+        </span>
+
+        {running && live?.accessUrl && (
+          <a
+            href={live.accessUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "6px",
+              fontSize: "12px",
+              color: "var(--accent)",
+              textDecoration: "underline",
+            }}
+          >
+            <FiExternalLink size={12} />
+            {live.accessUrl}
+          </a>
+        )}
+
+        <span style={{ marginLeft: "auto" }}>
+          {!imageReady ? (
+            <span style={{ fontSize: "12px", color: "var(--fg-dim)" }}>
+              image not built
+            </span>
+          ) : running || state === "STARTING" ? (
+            <button
+              className="btn"
+              disabled={busy}
+              onClick={stop}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "6px",
+                fontSize: "12px",
+              }}
+            >
+              <FiSquare size={12} />
+              {busy ? "..." : "Stop"}
+            </button>
+          ) : (
+            <button
+              className="btn btn-primary"
+              disabled={busy}
+              onClick={start}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "6px",
+                fontSize: "12px",
+              }}
+            >
+              <FiPlay size={12} />
+              {busy ? "..." : "Start instance"}
+            </button>
+          )}
+        </span>
+      </div>
+      {state === "FAILED" && live?.lastLog && (
+        <pre
+          style={{
+            marginTop: "8px",
+            maxHeight: "140px",
+            overflow: "auto",
+            fontSize: "11px",
+            color: "var(--danger)",
+          }}
+        >
+          {String(live.lastLog).slice(-2000)}
+        </pre>
+      )}
+    </div>
+  );
 }
 
 export default function ChallengeView({
   challenge,
   onSolved,
+  hasTeam,
+  onInstanceChanged,
 }: {
   challenge: ChallengeData;
   onSolved?: () => void;
+  /** Players without a team don't see the instance panel (#5). */
+  hasTeam?: boolean;
+  onInstanceChanged?: () => void;
 }) {
   const [flag, setFlag] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -217,6 +449,14 @@ export default function ChallengeView({
       >
         {challenge.description}
       </div>
+
+      {/* Team instance for dynamic challenges (#5) — static ones unchanged */}
+      {challenge.isDynamic && hasTeam && (
+        <InstancePanel
+          challenge={challenge}
+          onRefresh={onInstanceChanged ?? (() => {})}
+        />
+      )}
 
       {challenge.link && (
         <div style={{ marginBottom: "20px" }}>

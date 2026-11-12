@@ -46,6 +46,9 @@ export async function GET() {
             flags: {
               select: { id: true, points: true },
             },
+            containerConfig: {
+              select: { buildState: true },
+            },
           },
           orderBy: [{ category: "asc" }, { points: "asc" }],
         }),
@@ -100,21 +103,45 @@ export async function GET() {
   // Per-user data — NOT cached (cheap queries, user-specific)
   let solvedChallengeIds: string[] = [];
   let solvedFlagIds: string[] = [];
+  const instanceByChallenge = new Map<
+    string,
+    {
+      state: string;
+      accessUrl: string | null;
+      expiresAt: Date | null;
+      startCount: number;
+    }
+  >();
 
   if (session?.user?.teamId) {
-    const solvedSubmissions = await prisma.submission.findMany({
-      where: {
-        teamId: session.user.teamId,
-        isCorrect: true,
-      },
-      select: { challengeId: true, flagId: true },
-    });
+    const [solvedSubmissions, teamInstances] = await Promise.all([
+      prisma.submission.findMany({
+        where: {
+          teamId: session.user.teamId,
+          isCorrect: true,
+        },
+        select: { challengeId: true, flagId: true },
+      }),
+      prisma.challengeInstance.findMany({
+        where: { teamId: session.user.teamId },
+        select: {
+          challengeId: true,
+          state: true,
+          accessUrl: true,
+          expiresAt: true,
+          startCount: true,
+        },
+      }),
+    ]);
     solvedChallengeIds = [
       ...new Set(solvedSubmissions.map((s) => s.challengeId)),
     ];
     solvedFlagIds = solvedSubmissions
       .filter((s) => s.flagId)
       .map((s) => s.flagId!);
+    for (const inst of teamInstances) {
+      instanceByChallenge.set(inst.challengeId, inst);
+    }
   }
 
   // Check unlock conditions for locked challenges.
@@ -158,6 +185,11 @@ export async function GET() {
       multipleFlags: challenge.multipleFlags,
       link: isLocked ? null : challenge.link,
       files: isLocked ? [] : challenge.files,
+      // Dynamic-challenge data (#5): the instance panel only renders for
+      // dynamic challenges of a team; static ones are untouched.
+      isDynamic: challenge.containerConfig !== null,
+      buildState: challenge.containerConfig?.buildState ?? null,
+      instance: instanceByChallenge.get(challenge.id) ?? null,
       hintCount: challenge.hints.length,
       flags: challenge.multipleFlags
         ? challenge.flags.map((f) => ({
@@ -181,6 +213,7 @@ export async function GET() {
   return NextResponse.json({
     categories: Object.keys(categories),
     challengesByCategory: categories,
+    hasTeam: session?.user?.teamId != null,
     gameStatus: { state: gameStatus.state },
   });
 }

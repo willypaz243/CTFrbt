@@ -103,6 +103,8 @@ export interface StartInstanceOptions {
   labels?: Record<string, string>;
   memoryLimitMb?: number;
   cpuLimit?: string;
+  /** Full subdomain the gateway should route to this instance. */
+  gatewayHost?: string;
 }
 
 export async function startInstance(
