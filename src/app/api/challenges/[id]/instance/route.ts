@@ -20,9 +20,15 @@ import { startInstance, getInstance, deleteInstance } from "@/lib/orchestrator";
 
 const GATEWAY_DOMAIN = process.env.GATEWAY_DOMAIN ?? "inst.ctfrbt.local";
 const GATEWAY_SCHEME = process.env.GATEWAY_SCHEME ?? "http";
+// Optional port for the browser URL only (dev: gateway published on :8088 under
+// rootless podman). Traefik Host() rules match the hostname, so gatewayHost
+// passed to the orchestrator stays port-free.
+const GATEWAY_PORT = process.env.GATEWAY_PORT
+  ? `:${process.env.GATEWAY_PORT}`
+  : "";
 
 const accessUrlFor = (token: string) =>
-  `${GATEWAY_SCHEME}://${token}.${GATEWAY_DOMAIN}/`;
+  `${GATEWAY_SCHEME}://${token}.${GATEWAY_DOMAIN}${GATEWAY_PORT}/`;
 
 function toResponse(instance: {
   state: string;

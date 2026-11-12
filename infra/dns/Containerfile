@@ -1,0 +1,21 @@
+# DNS local de desarrollo para CTFrbt (historia #15)
+# dnsmasq minimo: wildcard *.inst.ctfrbt.home.arpa -> IP LAN + reenvio al upstream.
+FROM docker.io/library/alpine:3.20
+
+RUN apk add --no-cache dnsmasq
+
+COPY base.conf /etc/dnsmasq.d/99-ctfrbt-base.conf
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+# Parametrizacion por env (la usa el quadlet en host network):
+#   DNSMASQ_INTERFACE      interfaz donde escuchar (vacio = todas en la netns)
+#   DNSMASQ_WILDCARD_DOMAIN dominio comodin
+#   DNSMASQ_WILDCARD_IP    IP a la que resuelve el comodin
+#   DNSMASQ_UPSTREAM       DNS aguas arriba para el resto de dominios
+ENV DNSMASQ_INTERFACE="" \
+    DNSMASQ_WILDCARD_DOMAIN="inst.ctfrbt.home.arpa" \
+    DNSMASQ_WILDCARD_IP="192.168.0.10" \
+    DNSMASQ_UPSTREAM="192.168.0.53"
+
+ENTRYPOINT ["/entrypoint.sh"]

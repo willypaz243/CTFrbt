@@ -1,0 +1,23 @@
+# CTFrbt dev DNS (historia #15) — quadlet de SISTEMA (root): bind de puerto 53.
+# Instalacion (ver README.md): copiar a /etc/containers/systemd/ctfrbt-dns.container
+[Unit]
+Description=CTFrbt dev DNS (dnsmasq *.inst.ctfrbt.home.arpa)
+After=network-online.target
+Wants=network-online.target
+
+[Container]
+ContainerName=ctfrbt-dns
+Image=localhost/ctfrbt-dns:latest
+# host network: resuelve en la red LAN; interface= limita a enp13s0 (no interfiere con los dnsmasq de libvirt en virbr*)
+NetworkMode=host
+Environment=DNSMASQ_INTERFACE=enp13s0
+Environment=DNSMASQ_WILDCARD_DOMAIN=inst.ctfrbt.home.arpa
+Environment=DNSMASQ_WILDCARD_IP=192.168.0.10
+Environment=DNSMASQ_UPSTREAM=192.168.0.53
+
+[Service]
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
