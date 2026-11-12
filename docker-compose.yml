@@ -16,6 +16,7 @@ services:
       ORCHESTRATOR_SECRET: ${ORCHESTRATOR_SECRET:-change-this-to-a-random-secret}
       GATEWAY_DOMAIN: ${GATEWAY_DOMAIN:-inst.ctfrbt.local}
       GATEWAY_SCHEME: ${GATEWAY_SCHEME:-http}
+      GATEWAY_PORT: ${GATEWAY_PORT:-}
     depends_on:
       postgres:
         condition: service_healthy
