@@ -73,12 +73,18 @@ export function mockSession(user: {
   id: string;
   teamId?: string | null;
   isAdmin?: boolean;
+  alias?: string;
+  name?: string;
+  isTeamLeader?: boolean;
 }): void {
   vi.mocked(getServerSession).mockResolvedValue({
     user: {
       id: user.id,
+      alias: user.alias ?? "tester",
+      name: user.name ?? "Tester",
       teamId: user.teamId ?? null,
       isAdmin: user.isAdmin ?? false,
+      isTeamLeader: user.isTeamLeader ?? false,
     },
   } as Awaited<ReturnType<typeof getServerSession>>);
 }

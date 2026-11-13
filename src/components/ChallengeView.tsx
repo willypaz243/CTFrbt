@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import toast from "react-hot-toast";
 import ExpiryCountdown from "@/components/ExpiryCountdown";
+import { hostPortFromUrl } from "@/lib/host-port";
 import {
   FiDownload,
   FiLock,
@@ -10,7 +11,6 @@ import {
   FiHelpCircle,
   FiPlay,
   FiSquare,
-  FiExternalLink,
 } from "react-icons/fi";
 
 export interface ChallengeFile {
@@ -39,6 +39,9 @@ export interface InstanceData {
   expiresAt: string | null;
   startCount: number;
   lastLog?: string | null;
+  sshUser?: string | null;
+  sshPass?: string | null;
+  containerPort?: number | null;
 }
 
 export interface ChallengeData {
@@ -243,22 +246,23 @@ function InstancePanel({
         )}
 
         {running && live?.accessUrl && (
-          <a
-            href={live.accessUrl}
-            target="_blank"
-            rel="noopener noreferrer"
+          <span
             style={{
               display: "inline-flex",
               alignItems: "center",
               gap: "6px",
               fontSize: "12px",
-              color: "var(--accent)",
-              textDecoration: "underline",
+              fontFamily: "var(--font-mono)",
+              color: "var(--fg-muted)",
             }}
           >
-            <FiExternalLink size={12} />
-            {live.accessUrl}
-          </a>
+            {hostPortFromUrl(live.accessUrl)}
+            {live.containerPort === 22 && live.sshUser && live.sshPass && (
+              <span style={{ color: "var(--fg-dim)" }}>
+                — {live.sshUser} / {live.sshPass}
+              </span>
+            )}
+          </span>
         )}
 
         <span style={{ marginLeft: "auto" }}>

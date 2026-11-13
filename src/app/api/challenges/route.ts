@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
-import { prisma } from "@/lib/prisma";
+import { Prisma, prisma } from "@/lib/prisma";
 import { getOrSet, CACHE_KEYS } from "@/lib/cache";
 import { getGameWindowStatus } from "@/lib/game-window";
 import { sweepExpiredThrottled } from "@/lib/instance-sweeper";
@@ -9,6 +9,36 @@ import { areConditionsMet } from "@/lib/unlock";
 import type { UnlockCondition } from "../../../../prisma/generated/client";
 
 const CHALLENGES_TTL_MS = 15_000; // 15 seconds
+
+/**
+ * Shape the team's instance for the list payload. `containerPort` tells
+ * the UI this is an SSH challenge (22) so it only shows the SSH
+ * credentials then (#17).
+ */
+function mapInstance(
+  instance: {
+    state: string;
+    accessUrl: string | null;
+    expiresAt: Date | null;
+    startCount: number;
+    sshUser: string | null;
+    sshPass: string | null;
+    portMap: Prisma.JsonValue | null;
+  } | null,
+) {
+  if (!instance) return null;
+  return {
+    state: instance.state,
+    accessUrl: instance.accessUrl,
+    containerPort:
+      (instance.portMap as { containerPort?: number } | null)?.containerPort ??
+      null,
+    expiresAt: instance.expiresAt,
+    startCount: instance.startCount,
+    sshUser: instance.sshUser,
+    sshPass: instance.sshPass,
+  };
+}
 
 // GET /api/challenges — List all challenges grouped by category.
 // Auth required: challenge content is for registered players only.
@@ -116,6 +146,9 @@ export async function GET() {
       accessUrl: string | null;
       expiresAt: Date | null;
       startCount: number;
+      sshUser: string | null;
+      sshPass: string | null;
+      portMap: Prisma.JsonValue | null;
     }
   >();
 
@@ -136,6 +169,9 @@ export async function GET() {
           accessUrl: true,
           expiresAt: true,
           startCount: true,
+          sshUser: true,
+          sshPass: true,
+          portMap: true,
         },
       }),
     ]);
@@ -195,7 +231,7 @@ export async function GET() {
       // dynamic challenges of a team; static ones are untouched.
       isDynamic: challenge.containerConfig !== null,
       buildState: challenge.containerConfig?.buildState ?? null,
-      instance: instanceByChallenge.get(challenge.id) ?? null,
+      instance: mapInstance(instanceByChallenge.get(challenge.id) ?? null),
       hintCount: challenge.hints.length,
       flags: challenge.multipleFlags
         ? challenge.flags.map((f) => ({

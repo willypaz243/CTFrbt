@@ -34,6 +34,8 @@ export async function sweepExpiredInstances(
         token: null,
         containerId: null,
         portMap: Prisma.JsonNull,
+        sshUser: null,
+        sshPass: null,
         lastLog: null,
       },
     });

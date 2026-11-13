@@ -6,6 +6,7 @@ import { randomBytes } from "crypto";
 import { startInstance, getInstance, deleteInstance } from "@/lib/orchestrator";
 import { computeExpiresAt } from "@/lib/instance-expiry";
 import { sweepExpiredThrottled } from "@/lib/instance-sweeper";
+import { generateSshPassword, sanitizeSshUser } from "@/lib/ssh-credentials";
 
 /**
  * Player team instance for a dynamic challenge (#5).
@@ -36,13 +37,23 @@ function toResponse(instance: {
   expiresAt: Date | null;
   startCount: number;
   lastLog: string | null;
+  sshUser: string | null;
+  sshPass: string | null;
+  portMap: Prisma.JsonValue | null;
 }) {
   return {
     state: instance.state,
     accessUrl: instance.accessUrl,
+    // The container port lets the UI tell an SSH challenge (22) from an
+    // HTTP one (#17): credentials are only shown for SSH.
+    containerPort:
+      (instance.portMap as { containerPort?: number } | null)?.containerPort ??
+      null,
     expiresAt: instance.expiresAt,
     startCount: instance.startCount,
     lastLog: instance.state === "FAILED" ? instance.lastLog : null,
+    sshUser: instance.sshUser,
+    sshPass: instance.sshPass,
   };
 }
 
@@ -64,7 +75,7 @@ async function getActor() {
   }
   // Sweep expired instances before any instance read/start (#7).
   await sweepExpiredThrottled();
-  return { teamId };
+  return { teamId, alias: session.user.alias };
 }
 
 export async function GET(
@@ -104,6 +115,8 @@ export async function GET(
           token: null,
           containerId: null,
           portMap: Prisma.JsonNull,
+          sshUser: null,
+          sshPass: null,
           lastLog: null,
         },
       });
@@ -166,6 +179,11 @@ export async function POST(
   const token = randomBytes(16).toString("hex");
   const flag =
     existing?.flag ?? `flag{${actor.teamId}-${randomBytes(8).toString("hex")}}`;
+  // Per-team SSH credentials (#17): user derived from the player's alias,
+  // password re-rolled on every start — the container's entrypoint creates
+  // the non-root user from these envs, like it does with FLAG (#6).
+  const sshUser = sanitizeSshUser(actor.alias);
+  const sshPass = generateSshPassword();
   const gameConfig = await prisma.gameConfig.findFirst({
     orderBy: { createdAt: "desc" },
   });
@@ -183,6 +201,8 @@ export async function POST(
       state: "STARTING",
       token,
       flag,
+      sshUser,
+      sshPass,
       containerId: name,
       imageDigest: config.imageDigest,
       expiresAt,
@@ -191,6 +211,8 @@ export async function POST(
     update: {
       state: "STARTING",
       token,
+      sshUser,
+      sshPass,
       containerId: name,
       imageDigest: config.imageDigest,
       accessUrl: null,
@@ -203,7 +225,7 @@ export async function POST(
   const result = await startInstance({
     image: `ctfrbt/${id}`,
     name,
-    env: { FLAG: flag },
+    env: { FLAG: flag, SSH_USER: sshUser, SSH_PASS: sshPass },
     labels: {
       "ctfrbt.challengeId": id,
       "ctfrbt.teamId": actor.teamId,
@@ -274,6 +296,8 @@ export async function DELETE(
         token: null,
         containerId: null,
         portMap: Prisma.JsonNull,
+        sshUser: null,
+        sshPass: null,
         lastLog: null,
       },
     });

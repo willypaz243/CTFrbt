@@ -121,6 +121,8 @@ model ChallengeInstance {
   terminalUrl String?
   vpnIp       String?
   portMap     Json?
+  sshUser     String?   /// usuario SSH no-root del equipo, sanitizado del alias (#17)
+  sshPass     String?   /// contraseña SSH aleatoria; rota en cada start (#17)
   expiresAt   DateTime?
   startCount  Int       @default(0)
   lastLog     String?
