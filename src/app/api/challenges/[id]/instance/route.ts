@@ -5,6 +5,7 @@ import { Prisma, prisma } from "@/lib/prisma";
 import { randomBytes } from "crypto";
 import { startInstance, getInstance, deleteInstance } from "@/lib/orchestrator";
 import { computeExpiresAt } from "@/lib/instance-expiry";
+import { getGameWindowStatus } from "@/lib/game-window";
 import { sweepExpiredThrottled } from "@/lib/instance-sweeper";
 import { generateSshPassword, sanitizeSshUser } from "@/lib/ssh-credentials";
 
@@ -138,6 +139,13 @@ export async function POST(
   const { id } = await params;
   const actor = await getActor();
   if ("error" in actor) return actor.error;
+
+  // No new instances once the CTF is over — running ones can still be
+  // stopped (the DELETE path stays open).
+  const gameStatus = await getGameWindowStatus();
+  if (gameStatus.state === "ended") {
+    return NextResponse.json({ error: "The CTF has ended" }, { status: 403 });
+  }
 
   const challenge = await prisma.challenge.findUnique({
     where: { id },
