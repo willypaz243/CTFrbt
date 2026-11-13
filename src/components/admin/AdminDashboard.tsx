@@ -324,6 +324,33 @@ export default function AdminDashboard() {
     }
   };
 
+  const [ttlBusyId, setTtlBusyId] = useState<string | null>(null);
+
+  const saveTtl = async (challengeId: string, ttlMinutes: number | null) => {
+    setTtlBusyId(challengeId);
+    try {
+      const res = await fetch(
+        `/api/admin/challenges/${challengeId}/container`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ttlMinutes }),
+        },
+      );
+      const data = await res.json();
+      if (!res.ok) {
+        toast.error(data.error || "Failed to save TTL");
+        return;
+      }
+      loadChallenges();
+      toast.success("TTL saved");
+    } catch {
+      toast.error("Failed to save TTL");
+    } finally {
+      setTtlBusyId(null);
+    }
+  };
+
   const rebuildDockerfile = async (challengeId: string, dockerfile: string) => {
     setRebuildBusyId(challengeId);
     try {
@@ -578,6 +605,7 @@ export default function AdminDashboard() {
           uploadingId={uploadingId}
           testBusyId={testBusyId}
           rebuildBusyId={rebuildBusyId}
+          ttlBusyId={ttlBusyId}
           onToggleForm={() => setShowForm(!showForm)}
           onFormChange={setForm}
           onFormFilesChange={setFormFiles}
@@ -589,6 +617,7 @@ export default function AdminDashboard() {
           onStartTest={startTest}
           onStopTest={stopTest}
           onRebuild={rebuildDockerfile}
+          onSaveTtl={saveTtl}
         />
       )}
 

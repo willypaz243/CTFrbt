@@ -6,6 +6,7 @@ import { useSortableTable } from "@/hooks/useSortableTable";
 
 export interface ChallengeContainerConfig {
   dockerfile: string;
+  ttlMinutes: number | null;
   buildState: "QUEUED" | "BUILDING" | "READY" | "FAILED" | string;
   buildId: string | null;
   imageDigest: string | null;
@@ -73,6 +74,7 @@ interface ChallengesManagementProps {
   uploadingId: string | null;
   testBusyId: string | null;
   rebuildBusyId: string | null;
+  ttlBusyId: string | null;
   onToggleForm: () => void;
   onFormChange: (form: ChallengeForm) => void;
   onFormFilesChange: (files: File[]) => void;
@@ -84,6 +86,7 @@ interface ChallengesManagementProps {
   onStartTest: (challengeId: string) => void;
   onStopTest: (challengeId: string) => void;
   onRebuild: (challengeId: string, dockerfile: string) => void;
+  onSaveTtl: (challengeId: string, ttlMinutes: number | null) => void;
 }
 
 function formatSize(bytes: number): string {
@@ -202,14 +205,21 @@ function ChallengeFilesPanel({
 function DockerfilePanel({
   challenge,
   busy,
+  ttlBusy,
   onRebuild,
+  onSaveTtl,
 }: {
   challenge: Challenge;
   busy: boolean;
+  ttlBusy: boolean;
   onRebuild: (challengeId: string, dockerfile: string) => void;
+  onSaveTtl: (challengeId: string, ttlMinutes: number | null) => void;
 }) {
   const config = challenge.containerConfig!;
   const [draft, setDraft] = useState(config.dockerfile);
+  const [ttlDraft, setTtlDraft] = useState(
+    config.ttlMinutes == null ? "" : String(config.ttlMinutes),
+  );
   const rebuilding = config.pendingState === "BUILDING";
   const initialBuildRunning =
     config.buildState === "QUEUED" || config.buildState === "BUILDING";
@@ -262,6 +272,49 @@ function DockerfilePanel({
           onClick={() => onRebuild(challenge.id, draft)}
         >
           {busy ? "Saving..." : "Save & rebuild"}
+        </button>
+      </div>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: "8px",
+          marginBottom: "6px",
+        }}
+      >
+        <span style={{ fontSize: "12px", fontWeight: 600 }}>Instance TTL</span>
+        <input
+          type="number"
+          min={1}
+          step={1}
+          placeholder="game end + 15 min"
+          value={ttlDraft}
+          onChange={(e) => setTtlDraft(e.target.value)}
+          style={{
+            width: "90px",
+            fontFamily: "var(--font-mono)",
+            fontSize: "12px",
+          }}
+        />
+        <span style={{ fontSize: "11px", color: "var(--fg-dim)" }}>
+          min — empty = game end + 15 min grace
+        </span>
+        <button
+          type="button"
+          className="btn"
+          style={{
+            fontSize: "11px",
+            padding: "2px 6px",
+            marginLeft: "auto",
+            cursor: ttlBusy ? "default" : "pointer",
+          }}
+          disabled={ttlBusy}
+          onClick={() => {
+            const trimmed = ttlDraft.trim();
+            onSaveTtl(challenge.id, trimmed === "" ? null : Number(trimmed));
+          }}
+        >
+          {ttlBusy ? "Saving..." : "Save TTL"}
         </button>
       </div>
       <textarea
@@ -429,6 +482,7 @@ export default function ChallengesManagement({
   uploadingId,
   testBusyId,
   rebuildBusyId,
+  ttlBusyId,
   onToggleForm,
   onFormChange,
   onFormFilesChange,
@@ -440,6 +494,7 @@ export default function ChallengesManagement({
   onStartTest,
   onStopTest,
   onRebuild,
+  onSaveTtl,
 }: ChallengesManagementProps) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const sortAccessors = useMemo(
@@ -951,7 +1006,9 @@ export default function ChallengesManagement({
                       key={c.id}
                       challenge={c}
                       busy={rebuildBusyId === c.id}
+                      ttlBusy={ttlBusyId === c.id}
                       onRebuild={onRebuild}
+                      onSaveTtl={onSaveTtl}
                     />
                     <ChallengeFilesPanel
                       challenge={c}

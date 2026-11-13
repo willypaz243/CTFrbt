@@ -85,6 +85,7 @@ model Challenge {
 model ContainerConfig {
   challengeId String    @id
   dockerfile  String
+  ttlMinutes  Int?      /// TTL de la instancia en minutos (null = fin de juego + holgura, #7)
   buildState  String    @default("QUEUED") /// QUEUED | BUILDING | READY | FAILED
   buildId     String?   /// id del build en el orquestador
   imageDigest String?

@@ -4,6 +4,7 @@ import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { getOrSet, CACHE_KEYS } from "@/lib/cache";
 import { getGameWindowStatus } from "@/lib/game-window";
+import { sweepExpiredThrottled } from "@/lib/instance-sweeper";
 import { areConditionsMet } from "@/lib/unlock";
 import type { UnlockCondition } from "../../../../prisma/generated/client";
 
@@ -99,6 +100,11 @@ export async function GET() {
       return { challenges, solveCounts };
     },
   );
+
+  // Expired dynamic instances are swept on read (#7): the standalone
+  // deployment has no background timer, so this throttled call keeps the
+  // list in sync (at most one sweep per 60 s).
+  await sweepExpiredThrottled();
 
   // Per-user data — NOT cached (cheap queries, user-specific)
   let solvedChallengeIds: string[] = [];

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import toast from "react-hot-toast";
+import ExpiryCountdown from "@/components/ExpiryCountdown";
 import {
   FiDownload,
   FiLock,
@@ -74,6 +75,10 @@ function InstancePanel({
 }) {
   const [busy, setBusy] = useState(false);
   const [live, setLive] = useState(challenge.instance ?? null);
+  // The client-side countdown hit zero but the server state has not been
+  // swept yet — show "stopping" feedback and refetch (the read triggers
+  // the throttled sweep on the server, #7).
+  const [expiring, setExpiring] = useState(false);
 
   // Poll while the instance is starting (the container takes a moment).
   const polling = live?.state === "STARTING";
@@ -94,6 +99,23 @@ function InstancePanel({
     const timer = setInterval(poll, 2000);
     return () => clearInterval(timer);
   }, [polling, poll]);
+
+  // The deadline passed client-side: refetch so the server sweeps the
+  // instance, and keep the "stopping" feedback up until the state moves.
+  const handleExpired = useCallback(() => {
+    setExpiring(true);
+    poll();
+    onRefresh();
+  }, [poll, onRefresh]);
+
+  // The server sweep is throttled to one per 60 s, so a read right after
+  // the deadline can predate the next sweep — keep polling until the
+  // state moves (EXPIRED/STOPPED) so the feedback cannot get stuck.
+  useEffect(() => {
+    if (!expiring) return;
+    const timer = setInterval(poll, 5000);
+    return () => clearInterval(timer);
+  }, [expiring, poll]);
 
   useEffect(() => {
     setLive(challenge.instance ?? null);
@@ -151,6 +173,11 @@ function InstancePanel({
   const state = live?.state ?? "NOT_STARTED";
   const running = state === "RUNNING";
 
+  // Clear the "stopping" feedback once the server state has moved on.
+  useEffect(() => {
+    if (state !== "RUNNING" && state !== "STARTING") setExpiring(false);
+  }, [state]);
+
   return (
     <div
       style={{
@@ -192,6 +219,28 @@ function InstancePanel({
           {state.toLowerCase().replace("_", " ")}
           {live && live.startCount > 1 && ` (start #${live.startCount})`}
         </span>
+        {(state === "RUNNING" || state === "STARTING") && live?.expiresAt && (
+          <span
+            style={{
+              fontSize: "12px",
+              fontFamily: "var(--font-mono)",
+              color:
+                expiring ||
+                new Date(live.expiresAt).getTime() - Date.now() < 5 * 60_000
+                  ? "var(--danger)"
+                  : "var(--fg-muted)",
+            }}
+          >
+            {expiring ? (
+              "expiring — stopping instance…"
+            ) : (
+              <ExpiryCountdown
+                expiresAt={live.expiresAt}
+                onExpired={handleExpired}
+              />
+            )}
+          </span>
+        )}
 
         {running && live?.accessUrl && (
           <a

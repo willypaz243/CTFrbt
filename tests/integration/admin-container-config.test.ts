@@ -3,7 +3,11 @@ vi.mock("next-auth", () => ({
 }));
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { GET, PUT } from "@/app/api/admin/challenges/[id]/container/route";
+import {
+  GET,
+  PATCH,
+  PUT,
+} from "@/app/api/admin/challenges/[id]/container/route";
 import { prisma } from "../helpers/db";
 import {
   createAdminUser,
@@ -14,9 +18,9 @@ import {
 
 const params = (id: string) => ({ params: Promise.resolve({ id }) });
 
-const json = (body: unknown) =>
+const json = (method: "PUT" | "PATCH", body: unknown) =>
   new Request("http://localhost/api/admin/challenges/x/container", {
-    method: "PUT",
+    method,
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
@@ -57,7 +61,7 @@ describe("admin container config", () => {
     });
 
     const res = await PUT(
-      json({ dockerfile: "FROM alpine:3.20\n" }),
+      json("PUT", { dockerfile: "FROM alpine:3.20\n" }),
       params(challenge.id),
     );
     expect(res.status).toBe(200);
@@ -84,7 +88,7 @@ describe("admin container config", () => {
       .mockRejectedValue(new Error("should not be called"));
 
     const res = await PUT(
-      json({ dockerfile: "RUN echo hi\n" }),
+      json("PUT", { dockerfile: "RUN echo hi\n" }),
       params(challenge.id),
     );
     expect(res.status).toBe(400);
@@ -109,7 +113,7 @@ describe("admin container config", () => {
     );
 
     const res = await PUT(
-      json({ dockerfile: "FROM alpine:3.20\n" }),
+      json("PUT", { dockerfile: "FROM alpine:3.20\n" }),
       params(challenge.id),
     );
     expect(res.status).toBe(502);
@@ -208,9 +212,135 @@ describe("admin container config", () => {
     mockSession(user);
 
     const res = await PUT(
-      json({ dockerfile: "FROM alpine:3.20\n" }),
+      json("PUT", { dockerfile: "FROM alpine:3.20\n" }),
       params(challenge.id),
     );
     expect(res.status).toBe(403);
+  });
+
+  describe("PATCH ttlMinutes (#7)", () => {
+    it("stores ttlMinutes without triggering a build", async () => {
+      const admin = await createAdminUser();
+      const challenge = await createChallenge();
+      mockSession(admin);
+
+      await prisma.containerConfig.create({
+        data: {
+          challengeId: challenge.id,
+          dockerfile: "FROM alpine:3.20\n",
+          buildState: "READY",
+          imageDigest: "sha256:abc123",
+        },
+      });
+
+      const fetchSpy = vi
+        .spyOn(globalThis, "fetch")
+        .mockRejectedValue(new Error("should not be called"));
+
+      const res = await PATCH(
+        json("PATCH", { ttlMinutes: 30 }),
+        params(challenge.id),
+      );
+      expect(res.status).toBe(200);
+
+      const body = await res.json();
+      expect(body.config.ttlMinutes).toBe(30);
+
+      const stored = await prisma.containerConfig.findUnique({
+        where: { challengeId: challenge.id },
+      });
+      expect(stored?.ttlMinutes).toBe(30);
+      expect(stored?.buildState).toBe("READY");
+      expect(stored?.imageDigest).toBe("sha256:abc123");
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+
+    it("PATCH null clears the TTL", async () => {
+      const admin = await createAdminUser();
+      const challenge = await createChallenge();
+      mockSession(admin);
+
+      await prisma.containerConfig.create({
+        data: {
+          challengeId: challenge.id,
+          dockerfile: "FROM alpine:3.20\n",
+          buildState: "READY",
+          imageDigest: "sha256:abc123",
+          ttlMinutes: 30,
+        },
+      });
+
+      vi.spyOn(globalThis, "fetch").mockRejectedValue(
+        new Error("should not be called"),
+      );
+
+      const res = await PATCH(
+        json("PATCH", { ttlMinutes: null }),
+        params(challenge.id),
+      );
+      expect(res.status).toBe(200);
+
+      const stored = await prisma.containerConfig.findUnique({
+        where: { challengeId: challenge.id },
+      });
+      expect(stored?.ttlMinutes).toBeNull();
+    });
+
+    it("PATCH rejects 0, negative and non-integer values", async () => {
+      const admin = await createAdminUser();
+      const challenge = await createChallenge();
+      mockSession(admin);
+
+      await prisma.containerConfig.create({
+        data: {
+          challengeId: challenge.id,
+          dockerfile: "FROM alpine:3.20\n",
+          buildState: "READY",
+          imageDigest: "sha256:abc123",
+          ttlMinutes: 30,
+        },
+      });
+
+      vi.spyOn(globalThis, "fetch").mockRejectedValue(
+        new Error("should not be called"),
+      );
+
+      for (const value of [0, -5, 2.5, "ten"]) {
+        const res = await PATCH(
+          json("PATCH", { ttlMinutes: value }),
+          params(challenge.id),
+        );
+        expect(res.status).toBe(400);
+      }
+
+      const stored = await prisma.containerConfig.findUnique({
+        where: { challengeId: challenge.id },
+      });
+      expect(stored?.ttlMinutes).toBe(30);
+    });
+
+    it("PATCH returns 404 for a challenge without container config", async () => {
+      const admin = await createAdminUser();
+      const challenge = await createChallenge();
+      mockSession(admin);
+
+      const res = await PATCH(
+        json("PATCH", { ttlMinutes: 30 }),
+        params(challenge.id),
+      );
+      expect(res.status).toBe(404);
+    });
+
+    it("PATCH is forbidden for non-admins", async () => {
+      const user = await createUser();
+      const challenge = await createChallenge();
+      mockSession(user);
+
+      const res = await PATCH(
+        json("PATCH", { ttlMinutes: 30 }),
+        params(challenge.id),
+      );
+      expect(res.status).toBe(403);
+    });
   });
 });

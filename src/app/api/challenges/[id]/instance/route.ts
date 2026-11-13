@@ -4,6 +4,8 @@ import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { randomBytes } from "crypto";
 import { startInstance, getInstance, deleteInstance } from "@/lib/orchestrator";
+import { computeExpiresAt } from "@/lib/instance-expiry";
+import { sweepExpiredThrottled } from "@/lib/instance-sweeper";
 
 /**
  * Player team instance for a dynamic challenge (#5).
@@ -64,6 +66,8 @@ async function getActor() {
       ),
     };
   }
+  // Sweep expired instances before any instance read/start (#7).
+  await sweepExpiredThrottled();
   return { teamId };
 }
 
@@ -159,9 +163,18 @@ export async function POST(
   // Every start re-issues the token: the old route is not enumerable.
   // The team's flag (#6) is issued once, on the first start, and persists
   // across restarts — it travels to the container only as env FLAG.
+  // The TTL (#7) is (re)computed on every start; changing the challenge's
+  // TTL later never affects a running instance.
   const token = randomBytes(16).toString("hex");
   const flag =
     existing?.flag ?? `flag{${actor.teamId}-${randomBytes(8).toString("hex")}}`;
+  const gameConfig = await prisma.gameConfig.findFirst({
+    orderBy: { createdAt: "desc" },
+  });
+  const expiresAt = computeExpiresAt({
+    ttlMinutes: config.ttlMinutes,
+    gameEnd: gameConfig?.endTime ?? null,
+  });
   const name = `ctfrbt-${id}-${actor.teamId}`;
 
   const instance = await prisma.challengeInstance.upsert({
@@ -174,6 +187,7 @@ export async function POST(
       flag,
       containerId: name,
       imageDigest: config.imageDigest,
+      expiresAt,
       startCount: 1,
     },
     update: {
@@ -182,7 +196,7 @@ export async function POST(
       containerId: name,
       imageDigest: config.imageDigest,
       accessUrl: null,
-      expiresAt: null,
+      expiresAt,
       lastLog: null,
       startCount: { increment: 1 },
     },

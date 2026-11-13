@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from "react";
 import { useTerminal } from "@/lib/terminal/TerminalContext";
 import toast from "react-hot-toast";
 import { ChallengeData } from "@/components/ChallengeView";
+import ExpiryCountdown from "@/components/ExpiryCountdown";
 import { fetchCached } from "@/lib/terminal/cache";
 
 export function CategoryView({ category }: { category: string }) {
@@ -145,6 +146,19 @@ export function CategoryView({ category }: { category: string }) {
                 {challenge.solveCount} solve
                 {challenge.solveCount !== 1 ? "s" : ""}
               </span>
+              {challenge.instance &&
+                (challenge.instance.state === "RUNNING" ||
+                  challenge.instance.state === "STARTING") &&
+                challenge.instance.expiresAt && (
+                  <span
+                    style={{
+                      marginLeft: "auto",
+                      fontFamily: "var(--font-mono)",
+                    }}
+                  >
+                    <ExpiryCountdown expiresAt={challenge.instance.expiresAt} />
+                  </span>
+                )}
             </div>
           </div>
         ))}

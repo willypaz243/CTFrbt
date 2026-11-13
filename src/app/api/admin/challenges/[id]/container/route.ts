@@ -15,6 +15,7 @@ import { PUBLIC_DIR, storedFileName } from "@/lib/uploads";
 
 interface ContainerConfigResponse {
   dockerfile: string;
+  ttlMinutes: number | null;
   buildState: string;
   buildId: string | null;
   imageDigest: string | null;
@@ -38,6 +39,7 @@ interface ChallengeFileInfo {
 
 function toResponse(config: {
   dockerfile: string;
+  ttlMinutes: number | null;
   buildState: string;
   buildId: string | null;
   imageDigest: string | null;
@@ -52,6 +54,7 @@ function toResponse(config: {
 }): ContainerConfigResponse {
   return {
     dockerfile: config.dockerfile,
+    ttlMinutes: config.ttlMinutes,
     buildState: config.buildState,
     buildId: config.buildId,
     imageDigest: config.imageDigest,
@@ -190,6 +193,54 @@ export async function PUT(
     config: toResponse(config),
     warnings: validation.warnings,
   });
+}
+
+// PATCH /api/admin/challenges/[id]/container — set/clear the instance TTL (#7)
+// without touching the Dockerfile or triggering a build.
+export async function PATCH(
+  request: Request,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const session = await getServerSession(authOptions);
+  if (!session?.user?.isAdmin) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
+  const { id } = await params;
+  const config = await prisma.containerConfig.findUnique({
+    where: { challengeId: id },
+  });
+  if (!config) {
+    return NextResponse.json(
+      { error: "Challenge has no container config" },
+      { status: 404 },
+    );
+  }
+
+  let body: { ttlMinutes?: number | null };
+  try {
+    body = (await request.json()) as { ttlMinutes?: number | null };
+  } catch {
+    return NextResponse.json({ error: "invalid JSON body" }, { status: 400 });
+  }
+
+  const { ttlMinutes } = body;
+  if (
+    ttlMinutes === undefined ||
+    (ttlMinutes !== null && (!Number.isInteger(ttlMinutes) || ttlMinutes <= 0))
+  ) {
+    return NextResponse.json(
+      { error: "ttlMinutes must be a positive integer or null" },
+      { status: 400 },
+    );
+  }
+
+  const updated = await prisma.containerConfig.update({
+    where: { challengeId: id },
+    data: { ttlMinutes },
+  });
+
+  return NextResponse.json({ config: toResponse(updated) });
 }
 
 // GET /api/admin/challenges/[id]/container — current config + build state
