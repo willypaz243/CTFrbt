@@ -15,6 +15,7 @@ import LoadingSpinner from "../ui/LoadingSpinner";
 import AdminTabs from "./AdminTabs";
 import AdminHeader from "./AdminHeader";
 import AnnouncementsView, { type Announcement } from "./AnnouncementsView";
+import FleetView from "./FleetView";
 import ChallengesManagement, {
   type Challenge,
   type ChallengeForm,
@@ -620,6 +621,9 @@ export default function AdminDashboard() {
           onSaveTtl={saveTtl}
         />
       )}
+
+      {/* Fleet Tab */}
+      {activeTab === "fleet" && <FleetView />}
 
       {/* Users Tab */}
       {activeTab === "users" && <UsersView currentUserId={session?.user?.id} />}

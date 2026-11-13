@@ -89,6 +89,14 @@ export interface InstanceRoute {
   protocol: string;
 }
 
+/** Container summary from the orchestrator's fleet listing (#8). */
+export interface OrchestratorInstanceSummary {
+  containerId: string;
+  name: string;
+  state: "RUNNING" | "EXITED";
+  labels: Record<string, string>;
+}
+
 export interface OrchestratorInstance {
   containerId: string;
   name: string;
@@ -139,6 +147,28 @@ export async function getInstance(
     );
     if (!res.ok) return null;
     return (await res.json()) as OrchestratorInstance;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * List every managed container in the orchestrator (#8). Returns null when
+ * the orchestrator is unreachable so callers can degrade gracefully.
+ */
+export async function listInstances(): Promise<
+  OrchestratorInstanceSummary[] | null
+> {
+  try {
+    const res = await fetch(`${ORCHESTRATOR_URL}/instances`, {
+      headers: headers(),
+      cache: "no-store",
+    });
+    if (!res.ok) return null;
+    const body = (await res.json()) as {
+      instances: OrchestratorInstanceSummary[];
+    };
+    return body.instances ?? [];
   } catch {
     return null;
   }

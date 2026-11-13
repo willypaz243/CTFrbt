@@ -9,6 +9,7 @@ interface AdminTabsProps {
 
 const tabs = [
   { id: "challenges", label: "Challenges" },
+  { id: "fleet", label: "Fleet" },
   { id: "users", label: "Users" },
   { id: "teams", label: "Teams" },
   { id: "submissions", label: "Submissions" },
