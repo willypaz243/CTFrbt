@@ -157,7 +157,11 @@ export async function POST(
   }
 
   // Every start re-issues the token: the old route is not enumerable.
+  // The team's flag (#6) is issued once, on the first start, and persists
+  // across restarts — it travels to the container only as env FLAG.
   const token = randomBytes(16).toString("hex");
+  const flag =
+    existing?.flag ?? `flag{${actor.teamId}-${randomBytes(8).toString("hex")}}`;
   const name = `ctfrbt-${id}-${actor.teamId}`;
 
   const instance = await prisma.challengeInstance.upsert({
@@ -167,6 +171,7 @@ export async function POST(
       teamId: actor.teamId,
       state: "STARTING",
       token,
+      flag,
       containerId: name,
       imageDigest: config.imageDigest,
       startCount: 1,
@@ -186,6 +191,7 @@ export async function POST(
   const result = await startInstance({
     image: `ctfrbt/${id}`,
     name,
+    env: { FLAG: flag },
     labels: {
       "ctfrbt.challengeId": id,
       "ctfrbt.teamId": actor.teamId,

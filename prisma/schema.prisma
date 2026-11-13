@@ -106,6 +106,7 @@ model ContainerConfig {
 
 /// Una por (reto, equipo): la instancia viva del reto dinámico del equipo (#5).
 /// El token se regenera en cada arranque (ruta no enumerable, vieja muere).
+/// La flag (#6) se genera en el primer start y NO rota en reinicios.
 model ChallengeInstance {
   id          String    @id @default(cuid())
   challengeId String
@@ -114,6 +115,7 @@ model ChallengeInstance {
   containerId String?   /// nombre del contenedor en el orquestador
   imageDigest String?   /// digest de la imagen en uso
   token       String?   /// subdominio aleatorio (re-emitido en cada start)
+  flag        String?   /// flag única del equipo (env FLAG en el contenedor)
   accessUrl   String?   /// <scheme>://<token>.inst.<dominio>/
   terminalUrl String?
   vpnIp       String?
@@ -129,6 +131,7 @@ model ChallengeInstance {
   @@unique([challengeId, teamId])
   @@index([state])
   @@index([expiresAt])
+  @@index([flag])
 }
 
 model ChallengeFlag {

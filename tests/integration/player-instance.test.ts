@@ -15,6 +15,14 @@ import {
 
 const params = (id: string) => ({ params: Promise.resolve({ id }) });
 
+// Mirror the route's env handling so the assertions hold whatever the dev
+// .env points at (inst.ctfrbt.local by default, inst.ctfrbt.home.arpa:8088
+// in the local dev setup of story #15).
+const GATEWAY_DOMAIN = process.env.GATEWAY_DOMAIN ?? "inst.ctfrbt.local";
+const GATEWAY_PORT = process.env.GATEWAY_PORT
+  ? `:${process.env.GATEWAY_PORT}`
+  : "";
+
 const req = (id: string, method: "GET" | "POST" | "DELETE") =>
   new Request(`http://localhost/api/challenges/${id}/instance`, { method });
 
@@ -95,7 +103,7 @@ describe("player team instance", () => {
     };
     expect(body.instance.state).toBe("RUNNING");
     expect(body.instance.accessUrl).toMatch(
-      /^http:\/\/[a-f0-9]{32}\.inst\.ctfrbt\.local\/$/,
+      new RegExp(`^http://[a-f0-9]{32}\\.${GATEWAY_DOMAIN}${GATEWAY_PORT}/$`),
     );
     expect(body.instance.startCount).toBe(1);
 
@@ -125,9 +133,14 @@ describe("player team instance", () => {
     expect(sent.labels["ctfrbt.challengeId"]).toBe(challenge.id);
     expect(sent.labels["ctfrbt.teamId"]).toBe(team.id);
     expect(sent.gatewayHost).toBe(
-      body.instance.accessUrl!.replace(/^http:\/\//, "").replace(/\/$/, ""),
+      body.instance
+        .accessUrl!.replace(/^http:\/\//, "")
+        .replace(/\/$/, "")
+        .replace(/:\d+$/, ""),
     );
-    expect(sent.gatewayHost).toMatch(/^[a-f0-9]{32}\.inst\.ctfrbt\.local$/);
+    expect(sent.gatewayHost).toMatch(
+      new RegExp(`^[a-f0-9]{32}\\.${GATEWAY_DOMAIN}$`),
+    );
   });
 
   it("a second start while running is rejected with 409", async () => {

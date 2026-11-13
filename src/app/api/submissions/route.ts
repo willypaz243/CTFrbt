@@ -89,7 +89,7 @@ export async function POST(request: Request) {
     // Fetch challenge
     const challenge = await prisma.challenge.findUnique({
       where: { id: challengeId },
-      include: { flags: true },
+      include: { flags: true, containerConfig: true },
     });
 
     if (!challenge || !challenge.isActive) {
@@ -113,12 +113,35 @@ export async function POST(request: Request) {
       );
     }
 
-    // Check flag — multi-flag or single-flag mode
+    // Check flag — dynamic (per-team flag, #6), multi-flag or single-flag mode
     let isCorrect = false;
     let matchedFlagId: string | null = null;
     let pointsAwarded = 0;
+    // Dynamic only: team that owns the submitted flag, when it is not this
+    // team's (trap/steal signal for the organizers).
+    let foreignFlagTeamId: string | null = null;
 
-    if (challenge.multipleFlags && challenge.flags.length > 0) {
+    if (challenge.containerConfig) {
+      // Dynamic challenge: the flag was issued to the team on first start
+      // and injected into the container as env — it is validated here
+      // against the team's own instance row.
+      const myInstance = await prisma.challengeInstance.findUnique({
+        where: { challengeId_teamId: { challengeId: challenge.id, teamId } },
+        select: { flag: true },
+      });
+      if (myInstance?.flag && safeEqual(myInstance.flag, submittedFlag)) {
+        isCorrect = true;
+        pointsAwarded = challenge.points;
+      } else {
+        const owner = await prisma.challengeInstance.findFirst({
+          where: { challengeId: challenge.id, flag: submittedFlag },
+          select: { teamId: true },
+        });
+        if (owner && owner.teamId !== teamId) {
+          foreignFlagTeamId = owner.teamId;
+        }
+      }
+    } else if (challenge.multipleFlags && challenge.flags.length > 0) {
       const matchedFlag = challenge.flags.find((f) =>
         safeEqual(f.flag, submittedFlag),
       );
@@ -133,6 +156,17 @@ export async function POST(request: Request) {
     }
 
     if (!isCorrect) {
+      // A flag that belongs to another team is a trap/steal signal for the
+      // organizers — log it before recording the failed submission.
+      if (foreignFlagTeamId) {
+        await prisma.activityLog.create({
+          data: {
+            type: "FOREIGN_FLAG_SUBMIT",
+            description: `submitted the flag of team ${foreignFlagTeamId} on "${challenge.title}"`,
+            teamId,
+          },
+        });
+      }
       await prisma.submission.create({
         data: {
           flag: submittedFlag,

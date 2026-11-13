@@ -21,6 +21,8 @@ const TABLES = [
   "Submission",
   "ChallengeFile",
   "ChallengeFlag",
+  "ChallengeInstance",
+  "ContainerConfig",
   "Challenge",
   "User",
   "Team",
