@@ -67,6 +67,20 @@ Tests live in `tests/` (`unit/`, `integration/`, plus shared `helpers/` and
 `setup/`). The test database is disposable — the suite truncates every table
 between tests, so never point `DATABASE_URL` at real data.
 
+## Dynamic challenges
+
+Dynamic challenges ship a Docker image; each team gets a private container
+with a unique flag and its own random port (and SSH credentials for SSH
+challenges). Authoring guide — Dockerfile rules, uploaded files, runtime
+env vars in `.sh` entrypoints, lifecycle:
+[docs/dynamic-challenges.md](./docs/dynamic-challenges.md).
+
+## Deployment
+
+CI/CD via GitHub Actions (Docker Hub → SSH → Docker Swarm on the server),
+environments per branch, orchestrator setup, env vars and the pre-event
+checklist: [docs/deployment.md](./docs/deployment.md).
+
 ## License
 
 See [LICENSE](./LICENSE).
