@@ -15,13 +15,9 @@ import {
 
 const params = (id: string) => ({ params: Promise.resolve({ id }) });
 
-// Mirror the route's env handling so the assertions hold whatever the dev
-// .env points at (inst.ctfrbt.local by default, inst.ctfrbt.home.arpa:8088
-// in the local dev setup of story #15).
-const GATEWAY_DOMAIN = process.env.GATEWAY_DOMAIN ?? "inst.ctfrbt.local";
-const GATEWAY_PORT = process.env.GATEWAY_PORT
-  ? `:${process.env.GATEWAY_PORT}`
-  : "";
+// Mirror the route's env handling so the assertions hold whatever the
+// dev .env points at.
+const GATEWAY_HOST = process.env.GATEWAY_HOST ?? "localhost";
 
 const req = (id: string, method: "GET" | "POST" | "DELETE") =>
   new Request(`http://localhost/api/challenges/${id}/instance`, { method });
@@ -61,7 +57,7 @@ async function createReadyConfig(challengeId: string) {
   return prisma.containerConfig.create({
     data: {
       challengeId,
-      dockerfile: "FROM alpine:3.20\n",
+      dockerfile: "FROM alpine:3.20\nEXPOSE 80\n",
       buildState: "READY",
       imageDigest: "sha256:abc123",
     },
@@ -73,7 +69,7 @@ describe("player team instance", () => {
     vi.restoreAllMocks();
   });
 
-  it("POST starts the team instance and returns its gateway URL", async () => {
+  it("POST starts the team instance and returns its published port URL", async () => {
     const { user, team } = await createUserWithTeam();
     const challenge = await createChallenge();
     mockSession(user);
@@ -87,7 +83,7 @@ describe("player team instance", () => {
           containerId: name,
           name,
           state: "RUNNING",
-          routes: [],
+          routes: [{ containerPort: 80, hostPort: 24321, protocol: "tcp" }],
         },
       },
     });
@@ -102,9 +98,7 @@ describe("player team instance", () => {
       };
     };
     expect(body.instance.state).toBe("RUNNING");
-    expect(body.instance.accessUrl).toMatch(
-      new RegExp(`^http://[a-f0-9]{32}\\.${GATEWAY_DOMAIN}${GATEWAY_PORT}/$`),
-    );
+    expect(body.instance.accessUrl).toBe(`http://${GATEWAY_HOST}:24321/`);
     expect(body.instance.startCount).toBe(1);
 
     const stored = await prisma.challengeInstance.findUnique({
@@ -116,8 +110,8 @@ describe("player team instance", () => {
     expect(stored?.containerId).toBe(name);
     expect(stored?.imageDigest).toBe("sha256:abc123");
 
-    // The gateway host (random token) and the team labels reach the
-    // orchestrator.
+    // The team labels reach the orchestrator; the game flow no longer
+    // routes through the gateway (#16) — no gatewayHost in the request.
     const create = calls.find(
       (c) => c.method === "POST" && c.url === "/instances",
     );
@@ -126,21 +120,13 @@ describe("player team instance", () => {
       image: string;
       name: string;
       labels: Record<string, string>;
-      gatewayHost: string;
+      gatewayHost?: string;
     };
     expect(sent.image).toBe(`ctfrbt/${challenge.id}`);
     expect(sent.name).toBe(name);
     expect(sent.labels["ctfrbt.challengeId"]).toBe(challenge.id);
     expect(sent.labels["ctfrbt.teamId"]).toBe(team.id);
-    expect(sent.gatewayHost).toBe(
-      body.instance
-        .accessUrl!.replace(/^http:\/\//, "")
-        .replace(/\/$/, "")
-        .replace(/:\d+$/, ""),
-    );
-    expect(sent.gatewayHost).toMatch(
-      new RegExp(`^[a-f0-9]{32}\\.${GATEWAY_DOMAIN}$`),
-    );
+    expect(sent.gatewayHost).toBeUndefined();
   });
 
   it("a second start while running is rejected with 409", async () => {
@@ -153,7 +139,12 @@ describe("player team instance", () => {
     mockOrchestrator({
       "/instances": {
         status: 201,
-        body: { containerId: name, name, state: "RUNNING", routes: [] },
+        body: {
+          containerId: name,
+          name,
+          state: "RUNNING",
+          routes: [{ containerPort: 80, hostPort: 24321, protocol: "tcp" }],
+        },
       },
     });
     await POST(req(challenge.id, "POST"), params(challenge.id));
@@ -206,7 +197,9 @@ describe("player team instance", () => {
     expect(stored?.containerId).toBeNull();
   });
 
-  it("a restart re-issues the token (new URL, new start count)", async () => {
+  it("a restart re-issues the token and increments the start count", async () => {
+    // The host-port re-roll on restart is covered in
+    // dynamic-ports.test.ts (it needs a per-call orchestrator queue).
     const { user, team } = await createUserWithTeam();
     const challenge = await createChallenge();
     mockSession(user);
@@ -216,12 +209,15 @@ describe("player team instance", () => {
     mockOrchestrator({
       "/instances": {
         status: 201,
-        body: { containerId: name, name, state: "RUNNING", routes: [] },
+        body: {
+          containerId: name,
+          name,
+          state: "RUNNING",
+          routes: [{ containerPort: 80, hostPort: 24321, protocol: "tcp" }],
+        },
       },
     });
-    const first = (await (
-      await POST(req(challenge.id, "POST"), params(challenge.id))
-    ).json()) as { instance: { accessUrl: string } };
+    await POST(req(challenge.id, "POST"), params(challenge.id));
 
     await DELETE(req(challenge.id, "DELETE"), params(challenge.id));
 
@@ -229,7 +225,7 @@ describe("player team instance", () => {
       await POST(req(challenge.id, "POST"), params(challenge.id))
     ).json()) as { instance: { accessUrl: string; startCount: number } };
 
-    expect(second.instance.accessUrl).not.toBe(first.instance.accessUrl);
+    expect(second.instance.accessUrl).toBe(`http://${GATEWAY_HOST}:24321/`);
     expect(second.instance.startCount).toBe(2);
   });
 
@@ -256,7 +252,7 @@ describe("player team instance", () => {
     await prisma.containerConfig.create({
       data: {
         challengeId: challenge.id,
-        dockerfile: "FROM alpine:3.20\n",
+        dockerfile: "FROM alpine:3.20\nEXPOSE 80\n",
         buildState: "FAILED",
         buildLog: "boom",
       },

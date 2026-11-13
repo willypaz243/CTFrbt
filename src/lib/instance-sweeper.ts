@@ -1,4 +1,4 @@
-import { prisma } from "@/lib/prisma";
+import { Prisma, prisma } from "@/lib/prisma";
 import { deleteInstance } from "@/lib/orchestrator";
 
 /** How often the sweeper runs while the app process is alive (#7). */
@@ -33,6 +33,7 @@ export async function sweepExpiredInstances(
         accessUrl: null,
         token: null,
         containerId: null,
+        portMap: Prisma.JsonNull,
         lastLog: null,
       },
     });

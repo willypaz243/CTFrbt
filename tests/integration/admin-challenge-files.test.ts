@@ -257,7 +257,7 @@ describe("admin challenge files", () => {
       },
     );
 
-    const dockerfile = "FROM alpine:3.20\nCOPY data.bin /app/\n";
+    const dockerfile = "FROM alpine:3.20\nEXPOSE 80\nCOPY data.bin /app/\n";
     const res = await PUT(json({ dockerfile }), params(challenge.id));
     expect(res.status).toBe(200);
 
@@ -288,7 +288,7 @@ describe("admin challenge files", () => {
     );
 
     const res = await PUT(
-      json({ dockerfile: "FROM alpine:3.20\n" }),
+      json({ dockerfile: "FROM alpine:3.20\nEXPOSE 80\n" }),
       params(challenge.id),
     );
     expect(res.status).toBe(200);
@@ -315,7 +315,7 @@ describe("admin challenge files", () => {
     );
 
     const res = await PUT(
-      json({ dockerfile: "FROM alpine:3.20\n" }),
+      json({ dockerfile: "FROM alpine:3.20\nEXPOSE 80\n" }),
       params(challenge.id),
     );
     expect(res.status).toBe(500);

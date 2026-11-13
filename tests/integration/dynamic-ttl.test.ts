@@ -36,7 +36,7 @@ function mockOrchestrator() {
           containerId: "stub",
           name: "stub",
           state: "RUNNING",
-          routes: [],
+          routes: [{ containerPort: 80, hostPort: 24321, protocol: "tcp" }],
         }),
         {
           status: 201,
@@ -55,7 +55,7 @@ async function createReadyConfig(
   return prisma.containerConfig.create({
     data: {
       challengeId,
-      dockerfile: "FROM alpine:3.20\n",
+      dockerfile: "FROM alpine:3.20\nEXPOSE 80\n",
       buildState: "READY",
       imageDigest: "sha256:abc123",
       ttlMinutes: ttlMinutes ?? null,

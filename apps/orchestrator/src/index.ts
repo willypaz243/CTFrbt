@@ -27,6 +27,7 @@ import path from "node:path";
 import Dockerode from "dockerode";
 import { create as createTar } from "tar";
 import busboy from "busboy";
+import { pickHostPort } from "./ports.js";
 
 const PORT = Number(process.env.PORT ?? 7474);
 const HOST = process.env.HOST ?? "0.0.0.0";
@@ -215,8 +216,8 @@ async function createInstance(body: {
       });
   } catch {
     try {
-      // icc=false: no inter-container traffic on the bridge — the only way
-      // in is the gateway (or a published port for test instances).
+      // icc=false: no inter-container traffic on the bridge — the only
+      // way in is the single published host port (#16).
       await docker!.createNetwork({
         Name: networkName,
         Driver: "bridge",
@@ -233,49 +234,85 @@ async function createInstance(body: {
     const img = docker!.getImage(image);
     const imgInfo = await img.inspect();
     const exposed: string[] = Object.keys(imgInfo.Config.ExposedPorts ?? {});
+    const first = exposed[0];
+    // One port per instance (#16): the app validates exactly one EXPOSE,
+    // so the orchestrator only needs the first (and only) exposed port.
+    if (!first) return { error: "image exposes no ports" };
 
-    const container = await docker!.createContainer({
-      Image: image,
-      name,
-      Env: entries.map(([k, v]) => `${k}=${v}`),
-      Labels: labels,
-      ExposedPorts: Object.fromEntries(exposed.map((p) => [p, {}])),
-      HostConfig: {
-        Memory: memoryMb * 1024 * 1024,
-        CpuQuota: Math.round(cpuCores * 100_000),
-        CpuPeriod: 100_000,
-        PidsLimit: 64,
-        SecurityOpt: ["no-new-privileges"],
-        NetworkMode: networkName,
-        // Test instances (no gatewayHost) publish every exposed port on a
-        // random host port. Game instances (gatewayHost set) are reachable
-        // ONLY through the gateway — no host ports.
-        PublishAllPorts: !body.gatewayHost,
-      },
-    });
-    await container.start();
-
-    // Gateway registration (best effort): connect the gateway container
-    // to the instance network, then write the dynamic route entry
-    // (Host(`<gatewayHost>`) -> container:port).
-    if (body.gatewayHost) {
+    // Publish the exposed port on a random host port from the wide range;
+    // the random port doubles as the token (rotation on every start). A
+    // busy host port is excluded and creation is retried with a fresh pick.
+    const excluded = new Set<number>();
+    let lastError: Error = new Error("container not created");
+    for (let attempt = 0; attempt < 50; attempt++) {
+      let hostPort: number;
       try {
-        await docker!
-          .getNetwork(networkName)
-          .connect({ Container: GATEWAY_CONTAINER });
-        const first = exposed[0];
-        if (first) {
-          const port = Number(first.split("/")[0]);
-          if (Number.isInteger(port) && port > 0) {
-            await writeGatewayRoute(name, body.gatewayHost, port);
+        hostPort = pickHostPort(excluded);
+      } catch (err) {
+        return { error: (err as Error).message };
+      }
+      try {
+        const container = await docker!.createContainer({
+          Image: image,
+          name,
+          Env: entries.map(([k, v]) => `${k}=${v}`),
+          Labels: labels,
+          ExposedPorts: Object.fromEntries(exposed.map((p) => [p, {}])),
+          HostConfig: {
+            Memory: memoryMb * 1024 * 1024,
+            CpuQuota: Math.round(cpuCores * 100_000),
+            CpuPeriod: 100_000,
+            PidsLimit: 64,
+            SecurityOpt: ["no-new-privileges"],
+            NetworkMode: networkName,
+            PortBindings: {
+              [first]: [{ HostIp: "", HostPort: String(hostPort) }],
+            },
+          },
+        });
+        await container.start();
+
+        // Gateway registration (best effort, only when a gatewayHost is
+        // requested — test instances; game instances use the published
+        // port directly, #16): connect the gateway container to the
+        // instance network, then write the dynamic route entry
+        // (Host(`<gatewayHost>`) -> container:port).
+        if (body.gatewayHost) {
+          try {
+            await docker!
+              .getNetwork(networkName)
+              .connect({ Container: GATEWAY_CONTAINER });
+            const port = Number(first.split("/")[0]);
+            if (Number.isInteger(port) && port > 0) {
+              await writeGatewayRoute(name, body.gatewayHost, port);
+            }
+          } catch (err) {
+            console.error(
+              `orchestrator: gateway setup failed for ${name}:`,
+              err,
+            );
           }
         }
+
+        return (await inspectInstance(name))!;
       } catch (err) {
-        console.error(`orchestrator: gateway setup failed for ${name}:`, err);
+        lastError = err as Error;
+        const msg = lastError.message ?? "";
+        if (
+          msg.includes("EADDRINUSE") ||
+          msg.includes("address already in use") ||
+          msg.includes("port is already allocated") ||
+          msg.includes("port is not available")
+        ) {
+          excluded.add(hostPort);
+          continue;
+        }
+        break;
       }
     }
-
-    return (await inspectInstance(name))!;
+    // Best-effort cleanup of the half-created instance.
+    await removeInstance(name);
+    return { error: lastError.message };
   } catch (err) {
     // Best-effort cleanup of the half-created instance.
     await removeInstance(name);

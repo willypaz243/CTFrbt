@@ -53,7 +53,7 @@ async function createReadyConfig(challengeId: string) {
   return prisma.containerConfig.create({
     data: {
       challengeId,
-      dockerfile: "FROM alpine:3.20\n",
+      dockerfile: "FROM alpine:3.20\nEXPOSE 80\n",
       buildState: "READY",
       imageDigest: "sha256:abc123",
     },
@@ -125,7 +125,7 @@ describe("admin test instance", () => {
     await prisma.containerConfig.create({
       data: {
         challengeId: challenge.id,
-        dockerfile: "FROM alpine:3.20\n",
+        dockerfile: "FROM alpine:3.20\nEXPOSE 80\n",
         buildState: "FAILED",
         buildLog: "boom",
       },

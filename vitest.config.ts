@@ -42,6 +42,16 @@ export default defineConfig({
           fileParallelism: false,
         },
       },
+      {
+        // The orchestrator has no DB and no app aliases; its tests run
+        // against pure functions (the Docker calls are manual/E2E).
+        extends: true,
+        test: {
+          name: "orchestrator",
+          environment: "node",
+          include: ["apps/orchestrator/tests/**/*.test.ts"],
+        },
+      },
     ],
   },
 });

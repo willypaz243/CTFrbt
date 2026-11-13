@@ -61,7 +61,7 @@ describe("admin container config", () => {
     });
 
     const res = await PUT(
-      json("PUT", { dockerfile: "FROM alpine:3.20\n" }),
+      json("PUT", { dockerfile: "FROM alpine:3.20\nEXPOSE 80\n" }),
       params(challenge.id),
     );
     expect(res.status).toBe(200);
@@ -74,7 +74,7 @@ describe("admin container config", () => {
       where: { challengeId: challenge.id },
     });
     expect(stored).not.toBeNull();
-    expect(stored?.dockerfile).toBe("FROM alpine:3.20\n");
+    expect(stored?.dockerfile).toBe("FROM alpine:3.20\nEXPOSE 80\n");
     expect(stored?.buildState).toBe("BUILDING");
   });
 
@@ -113,7 +113,7 @@ describe("admin container config", () => {
     );
 
     const res = await PUT(
-      json("PUT", { dockerfile: "FROM alpine:3.20\n" }),
+      json("PUT", { dockerfile: "FROM alpine:3.20\nEXPOSE 80\n" }),
       params(challenge.id),
     );
     expect(res.status).toBe(502);
@@ -131,7 +131,7 @@ describe("admin container config", () => {
     await prisma.containerConfig.create({
       data: {
         challengeId: challenge.id,
-        dockerfile: "FROM alpine:3.20\n",
+        dockerfile: "FROM alpine:3.20\nEXPOSE 80\n",
         buildState: "BUILDING",
         buildId: "abcdef1234567890",
       },
@@ -173,7 +173,7 @@ describe("admin container config", () => {
     await prisma.containerConfig.create({
       data: {
         challengeId: challenge.id,
-        dockerfile: "FROM alpine:3.20\n",
+        dockerfile: "FROM alpine:3.20\nEXPOSE 80\n",
         buildState: "BUILDING",
         buildId: "abcdef1234567890",
       },
@@ -212,7 +212,7 @@ describe("admin container config", () => {
     mockSession(user);
 
     const res = await PUT(
-      json("PUT", { dockerfile: "FROM alpine:3.20\n" }),
+      json("PUT", { dockerfile: "FROM alpine:3.20\nEXPOSE 80\n" }),
       params(challenge.id),
     );
     expect(res.status).toBe(403);
@@ -227,7 +227,7 @@ describe("admin container config", () => {
       await prisma.containerConfig.create({
         data: {
           challengeId: challenge.id,
-          dockerfile: "FROM alpine:3.20\n",
+          dockerfile: "FROM alpine:3.20\nEXPOSE 80\n",
           buildState: "READY",
           imageDigest: "sha256:abc123",
         },
@@ -263,7 +263,7 @@ describe("admin container config", () => {
       await prisma.containerConfig.create({
         data: {
           challengeId: challenge.id,
-          dockerfile: "FROM alpine:3.20\n",
+          dockerfile: "FROM alpine:3.20\nEXPOSE 80\n",
           buildState: "READY",
           imageDigest: "sha256:abc123",
           ttlMinutes: 30,
@@ -294,7 +294,7 @@ describe("admin container config", () => {
       await prisma.containerConfig.create({
         data: {
           challengeId: challenge.id,
-          dockerfile: "FROM alpine:3.20\n",
+          dockerfile: "FROM alpine:3.20\nEXPOSE 80\n",
           buildState: "READY",
           imageDigest: "sha256:abc123",
           ttlMinutes: 30,

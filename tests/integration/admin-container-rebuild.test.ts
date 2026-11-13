@@ -48,7 +48,10 @@ async function buildFirstImage(challengeId: string, digest: string) {
   mockOrchestrator({
     "/builds": { status: 202, body: { buildId: "abcdef1234567890" } },
   });
-  await PUT(put(challengeId, "FROM alpine:3.20\n"), params(challengeId));
+  await PUT(
+    put(challengeId, "FROM alpine:3.20\nEXPOSE 80\n"),
+    params(challengeId),
+  );
   mockOrchestrator({
     "/builds/abcdef1234567890": {
       status: 200,
@@ -78,7 +81,7 @@ describe("admin container rolling rebuild", () => {
       "/builds": { status: 202, body: { buildId: "1111111111111111" } },
     });
     const res = await PUT(
-      put(challenge.id, "FROM alpine:3.20\nRUN echo v2\n"),
+      put(challenge.id, "FROM alpine:3.20\nEXPOSE 80\nRUN echo v2\n"),
       params(challenge.id),
     );
     expect(res.status).toBe(200);
@@ -101,7 +104,7 @@ describe("admin container rolling rebuild", () => {
       "/builds": { status: 202, body: { buildId: "2222222222222222" } },
     });
     await PUT(
-      put(challenge.id, "FROM alpine:3.20\nRUN echo v2\n"),
+      put(challenge.id, "FROM alpine:3.20\nEXPOSE 80\nRUN echo v2\n"),
       params(challenge.id),
     );
 
@@ -136,7 +139,7 @@ describe("admin container rolling rebuild", () => {
       "/builds": { status: 202, body: { buildId: "3333333333333333" } },
     });
     await PUT(
-      put(challenge.id, "FROM alpine:3.20\nRUN false\n"),
+      put(challenge.id, "FROM alpine:3.20\nEXPOSE 80\nRUN false\n"),
       params(challenge.id),
     );
 
@@ -173,7 +176,7 @@ describe("admin container rolling rebuild", () => {
     );
 
     const res = await PUT(
-      put(challenge.id, "FROM alpine:3.20\nRUN echo v2\n"),
+      put(challenge.id, "FROM alpine:3.20\nEXPOSE 80\nRUN echo v2\n"),
       params(challenge.id),
     );
     expect(res.status).toBe(502);
@@ -193,7 +196,10 @@ describe("admin container rolling rebuild", () => {
     mockOrchestrator({
       "/builds": { status: 202, body: { buildId: "4444444444444444" } },
     });
-    await PUT(put(challenge.id, "FROM alpine:3.20\n"), params(challenge.id));
+    await PUT(
+      put(challenge.id, "FROM alpine:3.20\nEXPOSE 80\n"),
+      params(challenge.id),
+    );
 
     mockOrchestrator({
       "/builds/4444444444444444": {

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
-import { prisma } from "@/lib/prisma";
+import { Prisma, prisma } from "@/lib/prisma";
 import { randomBytes } from "crypto";
 import { startInstance, getInstance, deleteInstance } from "@/lib/orchestrator";
 import { computeExpiresAt } from "@/lib/instance-expiry";
@@ -11,26 +11,22 @@ import { sweepExpiredThrottled } from "@/lib/instance-sweeper";
  * Player team instance for a dynamic challenge (#5).
  *
  * One instance per (challenge, team). Starting one (re)creates the
- * container from the built image, re-issues a random gateway token and
- * registers the wildcard route; stopping deletes the container and the
- * route. The old token/URL dies with the container.
+ * container from the built image and publishes its single EXPOSE port on
+ * a random host port (#16) — the random port doubles as the token, so it
+ * is re-rolled on every start and dies with the container. Stopping
+ * deletes the container; the old port/URL stop answering.
  *
  *  GET     /api/challenges/[id]/instance — state (polling)
  *  POST    /api/challenges/[id]/instance — start
  *  DELETE  /api/challenges/[id]/instance — stop
  */
 
-const GATEWAY_DOMAIN = process.env.GATEWAY_DOMAIN ?? "inst.ctfrbt.local";
-const GATEWAY_SCHEME = process.env.GATEWAY_SCHEME ?? "http";
-// Optional port for the browser URL only (dev: gateway published on :8088 under
-// rootless podman). Traefik Host() rules match the hostname, so gatewayHost
-// passed to the orchestrator stays port-free.
-const GATEWAY_PORT = process.env.GATEWAY_PORT
-  ? `:${process.env.GATEWAY_PORT}`
-  : "";
+// Host the players reach the published port on (dev: VM LAN IP; prod:
+// 167.157.27.65 with the 20000–60000 range forwarded — see #13/#16).
+const GATEWAY_HOST = process.env.GATEWAY_HOST ?? "localhost";
 
-const accessUrlFor = (token: string) =>
-  `${GATEWAY_SCHEME}://${token}.${GATEWAY_DOMAIN}${GATEWAY_PORT}/`;
+const accessUrlFor = (hostPort: number) =>
+  `http://${GATEWAY_HOST}:${hostPort}/`;
 
 function toResponse(instance: {
   state: string;
@@ -107,6 +103,7 @@ export async function GET(
           accessUrl: null,
           token: null,
           containerId: null,
+          portMap: Prisma.JsonNull,
           lastLog: null,
         },
       });
@@ -160,11 +157,12 @@ export async function POST(
     );
   }
 
-  // Every start re-issues the token: the old route is not enumerable.
-  // The team's flag (#6) is issued once, on the first start, and persists
-  // across restarts — it travels to the container only as env FLAG.
-  // The TTL (#7) is (re)computed on every start; changing the challenge's
-  // TTL later never affects a running instance.
+  // Every start re-issues the token and re-rolls the published port: the
+  // old URL is not enumerable. The team's flag (#6) is issued once, on
+  // the first start, and persists across restarts — it travels to the
+  // container only as env FLAG. The TTL (#7) is (re)computed on every
+  // start; changing the challenge's TTL later never affects a running
+  // instance.
   const token = randomBytes(16).toString("hex");
   const flag =
     existing?.flag ?? `flag{${actor.teamId}-${randomBytes(8).toString("hex")}}`;
@@ -210,7 +208,6 @@ export async function POST(
       "ctfrbt.challengeId": id,
       "ctfrbt.teamId": actor.teamId,
     },
-    gatewayHost: `${token}.${GATEWAY_DOMAIN}`,
   });
 
   if ("error" in result) {
@@ -221,9 +218,30 @@ export async function POST(
     return NextResponse.json({ instance: toResponse(failed) }, { status: 502 });
   }
 
+  const published = result.routes[0];
+  if (!published) {
+    // Defensive: the Dockerfile is validated to expose exactly one port
+    // (#16), so an empty route list means a broken orchestrator, not a
+    // bad config. Kill the half-published container.
+    await deleteInstance(result.containerId);
+    const failed = await prisma.challengeInstance.update({
+      where: { id: instance.id },
+      data: { state: "FAILED", lastLog: "orchestrator published no port" },
+    });
+    return NextResponse.json({ instance: toResponse(failed) }, { status: 502 });
+  }
+
   const running = await prisma.challengeInstance.update({
     where: { id: instance.id },
-    data: { state: "RUNNING", accessUrl: accessUrlFor(token) },
+    data: {
+      state: "RUNNING",
+      accessUrl: accessUrlFor(published.hostPort),
+      portMap: {
+        containerPort: published.containerPort,
+        hostPort: published.hostPort,
+        protocol: published.protocol,
+      },
+    },
   });
   return NextResponse.json({ instance: toResponse(running) });
 }
@@ -255,6 +273,7 @@ export async function DELETE(
         accessUrl: null,
         token: null,
         containerId: null,
+        portMap: Prisma.JsonNull,
         lastLog: null,
       },
     });
