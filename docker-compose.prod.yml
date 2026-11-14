@@ -77,6 +77,10 @@ services:
       POSTGRES_USER: ctfrbt
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ctfrbt
+    # Bound to 127.0.0.1 only: reachable from the VM itself (seed,
+    # psql, backups) but never from the network.
+    ports:
+      - "127.0.0.1:5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql
     healthcheck:
