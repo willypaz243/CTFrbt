@@ -1,0 +1,91 @@
+# Production compose for a single VM (rootless podman).
+#
+#   podman compose -f docker-compose.prod.yml up -d
+#
+# Secrets come from .env (same directory). Postgres is NOT published on
+# the host — the app reaches it over the internal network only. Players
+# reach instance containers directly on GATEWAY_HOST, ports 20000–60000.
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runner
+    container_name: ctfrbt-app
+    restart: unless-stopped
+    ports:
+      - "${APP_PORT:-3000}:3000"
+    environment:
+      DATABASE_URL: postgresql://ctfrbt:${POSTGRES_PASSWORD}@postgres:5432/ctfrbt
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET}
+      NEXTAUTH_URL: ${NEXTAUTH_URL}
+      ORCHESTRATOR_URL: http://orchestrator:7474
+      ORCHESTRATOR_SECRET: ${ORCHESTRATOR_SECRET}
+      GATEWAY_HOST: ${GATEWAY_HOST}
+      SESSION_MAX_AGE_HOURS: ${SESSION_MAX_AGE_HOURS:-72}
+      RATE_LIMIT_IP_MAX: ${RATE_LIMIT_IP_MAX:-600}
+      RATE_LIMIT_AUTH_MAX: ${RATE_LIMIT_AUTH_MAX:-120}
+      LOGIN_LOCKOUT_IP_MAX: ${LOGIN_LOCKOUT_IP_MAX:-60}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      orchestrator:
+        condition: service_started
+    volumes:
+      - uploads_data:/app/public/uploads
+
+  # Manages challenge containers over the host's Docker Engine socket.
+  # Rootless podman: the socket belongs to the same user context as this
+  # stack (see DOCKER_SOCKET_PATH in .env).
+  orchestrator:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: orchestrator-runner
+    container_name: ctfrbt-orchestrator
+    restart: unless-stopped
+    environment:
+      ORCHESTRATOR_SECRET: ${ORCHESTRATOR_SECRET}
+      DOCKER_SOCKET_PATH: ${DOCKER_SOCKET_PATH:-/run/user/1000/podman/podman.sock}
+      GATEWAY_DIR: /etc/traefik/dynamic
+      GATEWAY_CONTAINER: ctfrbt-gateway
+    volumes:
+      - ${DOCKER_SOCKET_PATH:-/run/user/1000/podman/podman.sock}:${DOCKER_SOCKET_PATH:-/run/user/1000/podman/podman.sock}
+      - gateway_data:/etc/traefik/dynamic
+
+  # Gateway (Traefik) — admin test instances only (v10 port channel).
+  # Safe to leave published on 8088, or remove the ports block entirely.
+  gateway:
+    image: traefik:v3.1
+    container_name: ctfrbt-gateway
+    restart: unless-stopped
+    command:
+      - --entrypoints.web.address=:80
+      - --providers.file.directory=/etc/traefik/dynamic
+      - --providers.file.watch=true
+    ports:
+      - "8088:80"
+    volumes:
+      - gateway_data:/etc/traefik/dynamic
+
+  # No host port: internal network only.
+  postgres:
+    image: postgres:18.4-alpine
+    container_name: ctfrbt-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ctfrbt
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ctfrbt
+    volumes:
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ctfrbt -d ctfrbt"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pgdata:
+  uploads_data:
+  gateway_data:
