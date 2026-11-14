@@ -86,8 +86,11 @@ export async function POST(
     return NextResponse.json({ error: started.error }, { status: 502 });
   }
 
+  // Same host convention as the player route: the address players/admins
+  // use to reach the published port (GATEWAY_HOST, default localhost).
+  const gatewayHost = process.env.GATEWAY_HOST ?? "localhost";
   const accessUrl = started.routes[0]
-    ? `http://localhost:${started.routes[0].hostPort}`
+    ? `http://${gatewayHost}:${started.routes[0].hostPort}/`
     : null;
   const fresh = await prisma.containerConfig.update({
     where: { challengeId: id },
