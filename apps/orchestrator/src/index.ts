@@ -103,7 +103,7 @@ interface InstanceRoute {
 interface InstanceInfo {
   containerId: string;
   name: string;
-  state: "RUNNING" | "EXITED";
+  state: "RUNNING" | "PAUSED" | "EXITED";
   routes: InstanceRoute[];
 }
 
@@ -123,7 +123,11 @@ async function inspectInstance(name: string): Promise<InstanceInfo | null> {
   return {
     containerId: name,
     name: info.Name.replace(/^\//, ""),
-    state: info.State.Running ? "RUNNING" : "EXITED",
+    state: info.State.Paused
+      ? "PAUSED"
+      : info.State.Running
+        ? "RUNNING"
+        : "EXITED",
     routes,
   };
 }
@@ -600,6 +604,43 @@ const server = createServer(async (req, res) => {
         return;
       }
       send(res, 201, result);
+      return;
+    }
+
+    // The event controller owns policy; this adapter only changes engine state.
+    const suspension = url.pathname.match(
+      /^\/instances\/([a-zA-Z0-9._-]+)\/(pause|resume)$/,
+    );
+    if (req.method === "POST" && suspension) {
+      try {
+        const container = docker!.getContainer(suspension[1]);
+        const info = await container.inspect();
+        const labels = info.Config.Labels ?? {};
+        if (labels["ctfrbt.managed"] !== "true" || !labels["ctfrbt.teamId"]) {
+          send(res, 403, {
+            error: "only managed participant instances can be suspended",
+          });
+          return;
+        }
+        if (!info.State.Running) {
+          send(res, 409, {
+            code: "INSTANCE_EXITED",
+            error: "instance is not running",
+          });
+          return;
+        }
+        const pause = suspension[2] === "pause";
+        if (pause && !info.State.Paused) await container.pause();
+        if (!pause && info.State.Paused) await container.unpause();
+        send(res, 200, { state: pause ? "PAUSED" : "RUNNING" });
+      } catch (err) {
+        const status = (err as { statusCode?: number }).statusCode;
+        send(res, status === 404 ? 404 : 502, {
+          code: status === 404 ? "INSTANCE_NOT_FOUND" : "ENGINE_ERROR",
+          error:
+            status === 404 ? "instance not found" : "engine suspension failed",
+        });
+      }
       return;
     }
 

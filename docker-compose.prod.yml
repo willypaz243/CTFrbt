@@ -34,6 +34,23 @@ services:
     volumes:
       - uploads_data:/app/public/uploads
 
+  # Independent policy worker: no Docker socket, no browser required.
+  instance-pause-controller:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runner
+    restart: unless-stopped
+    user: "1001:1001"
+    command: ["tsx", "scripts/instance-pause-worker.ts"]
+    environment:
+      DATABASE_URL: postgresql://ctfrbt:${POSTGRES_PASSWORD}@postgres:5432/ctfrbt
+      ORCHESTRATOR_URL: http://orchestrator:7474
+      ORCHESTRATOR_SECRET: ${ORCHESTRATOR_SECRET}
+    depends_on:
+      app:
+        condition: service_started
+
   # Manages challenge containers over the host's Docker Engine socket.
   # Rootless podman: the socket belongs to the same user context as this
   # stack (see DOCKER_SOCKET_PATH in .env).

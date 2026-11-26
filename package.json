@@ -9,6 +9,7 @@
   },
   "scripts": {
     "dev": "next dev --turbopack",
+    "instances:pause-worker": "node --env-file=.env --import tsx scripts/instance-pause-worker.ts",
     "build": "prisma generate && next build",
     "start": "next start",
     "lint": "eslint .",

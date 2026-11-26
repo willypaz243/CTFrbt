@@ -93,14 +93,14 @@ export interface InstanceRoute {
 export interface OrchestratorInstanceSummary {
   containerId: string;
   name: string;
-  state: "RUNNING" | "EXITED";
+  state: "RUNNING" | "PAUSED" | "EXITED";
   labels: Record<string, string>;
 }
 
 export interface OrchestratorInstance {
   containerId: string;
   name: string;
-  state: "RUNNING" | "EXITED";
+  state: "RUNNING" | "PAUSED" | "EXITED";
   routes: InstanceRoute[];
 }
 
@@ -168,7 +168,11 @@ export async function listInstances(): Promise<
     const body = (await res.json()) as {
       instances: OrchestratorInstanceSummary[];
     };
-    return body.instances ?? [];
+    return (body.instances ?? []).map((instance) => ({
+      ...instance,
+      state:
+        instance.state.toUpperCase() as OrchestratorInstanceSummary["state"],
+    }));
   } catch {
     return null;
   }
@@ -190,9 +194,14 @@ export async function deleteInstance(containerId: string): Promise<boolean> {
   try {
     const res = await fetch(
       `${ORCHESTRATOR_URL}/instances/${encodeURIComponent(containerId)}`,
-      { method: "DELETE", headers: headers(), cache: "no-store" },
+      {
+        method: "DELETE",
+        headers: headers(),
+        cache: "no-store",
+        signal: AbortSignal.timeout(3000),
+      },
     );
-    return res.ok;
+    return res.ok || res.status === 404;
   } catch {
     return false;
   }
@@ -212,4 +221,28 @@ export async function getBuild(
   } catch {
     return null;
   }
+}
+
+/** Idempotent engine operation; absence is different from an unavailable engine. */
+export async function setInstanceSuspended(
+  containerId: string,
+  suspended: boolean,
+): Promise<"ok" | "missing" | "stopped"> {
+  const response = await fetch(
+    `${ORCHESTRATOR_URL}/instances/${encodeURIComponent(containerId)}/${suspended ? "pause" : "resume"}`,
+    {
+      method: "POST",
+      headers: headers(),
+      cache: "no-store",
+      signal: AbortSignal.timeout(3000),
+    },
+  );
+  if (response.status === 404 || response.status === 409) {
+    const body = await response.json();
+    if (body.code === "INSTANCE_NOT_FOUND") return "missing";
+    if (body.code === "INSTANCE_EXITED") return "stopped";
+  }
+  if (!response.ok)
+    throw new Error(`Orchestrator suspension returned ${response.status}`);
+  return "ok";
 }

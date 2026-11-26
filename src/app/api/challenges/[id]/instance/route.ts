@@ -1,3 +1,5 @@
+import { SUSPENSION_STATES } from "@/lib/instance-pause-controller";
+import { blockDuringPause } from "@/lib/event-pause";
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
@@ -58,13 +60,19 @@ function toResponse(instance: {
   };
 }
 
-async function getActor() {
+async function getActor(
+  adminMayRead = false,
+): Promise<{ error: NextResponse } | { teamId: string; alias: string }> {
   const session = await getServerSession(authOptions);
   if (!session?.user) {
     return {
       error: NextResponse.json({ error: "Unauthorized" }, { status: 401 }),
     };
   }
+  const paused = await blockDuringPause(
+    adminMayRead && session.user.isAdmin === true,
+  );
+  if (paused) return { error: paused };
   const teamId = session.user.teamId ?? null;
   if (!teamId) {
     return {
@@ -84,7 +92,7 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
-  const actor = await getActor();
+  const actor = await getActor(true);
   if ("error" in actor) return actor.error;
 
   const challenge = await prisma.challenge.findUnique({ where: { id } });
@@ -170,7 +178,9 @@ export async function POST(
   });
   if (
     existing &&
-    (existing.state === "STARTING" || existing.state === "RUNNING")
+    (existing.state === "STARTING" ||
+      existing.state === "RUNNING" ||
+      SUSPENSION_STATES.includes(existing.state))
   ) {
     return NextResponse.json(
       { error: "instance already running" },
@@ -226,6 +236,9 @@ export async function POST(
       accessUrl: null,
       expiresAt,
       lastLog: null,
+      suspensionStartedAt: null,
+      suspensionError: null,
+      suspensionCheckedAt: null,
       startCount: { increment: 1 },
     },
   });
@@ -291,6 +304,12 @@ export async function DELETE(
     return NextResponse.json({ error: "instance not found" }, { status: 404 });
   }
 
+  if (SUSPENSION_STATES.includes(instance.state)) {
+    return NextResponse.json(
+      { error: "Instance suspension/resume is pending" },
+      { status: 409 },
+    );
+  }
   if (instance.state === "STARTING" || instance.state === "RUNNING") {
     if (instance.containerId) {
       // Deletes the container, its network and the gateway route.

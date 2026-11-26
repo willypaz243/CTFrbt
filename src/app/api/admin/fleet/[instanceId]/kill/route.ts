@@ -26,11 +26,11 @@ export async function POST(
     return NextResponse.json({ error: "instance not found" }, { status: 404 });
   }
 
-  if (instance.state === "STARTING" || instance.state === "RUNNING") {
-    if (instance.containerId) {
-      // Deletes the container, its network and any gateway route.
-      await deleteInstance(instance.containerId);
-    }
+  if (instance.containerId && !(await deleteInstance(instance.containerId))) {
+    return NextResponse.json(
+      { error: "Could not remove container; state preserved for retry" },
+      { status: 502 },
+    );
   }
 
   const stopped = await prisma.challengeInstance.update({
@@ -44,6 +44,8 @@ export async function POST(
       sshUser: null,
       sshPass: null,
       lastLog: null,
+      suspensionStartedAt: null,
+      suspensionError: null,
     },
   });
 

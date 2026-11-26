@@ -16,7 +16,7 @@ interface FleetInstance {
   expiresAt: string | null;
   createdAt: string;
   startCount: number;
-  containerState: "RUNNING" | "EXITED" | "MISSING" | null;
+  containerState: "RUNNING" | "PAUSED" | "EXITED" | "MISSING" | null;
 }
 
 const REFRESH_MS = 5000;
@@ -166,6 +166,7 @@ export default function FleetView() {
               <td>
                 {(i.state === "RUNNING" ||
                   i.state === "STARTING" ||
+                  ["SUSPENDING", "SUSPENDED", "RESUMING"].includes(i.state) ||
                   i.state === "NOT_STARTED" ||
                   i.state === "FAILED") && (
                   <button
