@@ -84,7 +84,9 @@ function InstancePanel({
   const [expiring, setExpiring] = useState(false);
 
   // Poll while the instance is starting (the container takes a moment).
-  const polling = live?.state === "STARTING";
+  const polling = ["STARTING", "SUSPENDING", "SUSPENDED", "RESUMING"].includes(
+    live?.state ?? "",
+  );
   const poll = useCallback(async () => {
     try {
       const res = await fetch(`/api/challenges/${challenge.id}/instance`);
@@ -269,6 +271,10 @@ function InstancePanel({
           {!imageReady ? (
             <span style={{ fontSize: "12px", color: "var(--fg-dim)" }}>
               image not built
+            </span>
+          ) : ["SUSPENDING", "SUSPENDED", "RESUMING"].includes(state) ? (
+            <span style={{ fontSize: 12 }}>
+              Waiting for instance controller…
             </span>
           ) : running || state === "STARTING" ? (
             <button

@@ -106,6 +106,63 @@ export default function AdminDashboard() {
     if (session?.user?.isAdmin) loadChallenges();
   }, [session, loadChallenges]);
 
+  const buildingIds = JSON.stringify(
+    challenges
+      .filter((item) => {
+        const c = item.containerConfig;
+        return (
+          c &&
+          (c.pendingState === "BUILDING" ||
+            ["QUEUED", "BUILDING"].includes(c.buildState))
+        );
+      })
+      .map((item) => item.id),
+  );
+
+  useEffect(() => {
+    const ids: string[] = JSON.parse(buildingIds);
+    if (!ids.length) return;
+    let cancelled = false;
+    let inFlight = false;
+    let reportedError = false;
+    const refreshBuilds = async () => {
+      if (inFlight || document.visibilityState !== "visible") return;
+      inFlight = true;
+      try {
+        for (const id of ids) {
+          if (cancelled) return;
+          const response = await fetch(
+            `/api/admin/challenges/${id}/container`,
+            { cache: "no-store", signal: AbortSignal.timeout(10000) },
+          );
+          if (!response.ok) throw new Error("Could not refresh build status");
+          const data = await response.json();
+          if (cancelled) return;
+          setChallenges((items) =>
+            items.map((item) =>
+              item.id === id ? { ...item, containerConfig: data.config } : item,
+            ),
+          );
+        }
+        reportedError = false;
+      } catch {
+        if (!cancelled && !reportedError)
+          toast.error(
+            "Could not refresh build status; retrying. Check the orchestrator.",
+          );
+        reportedError = true;
+      } finally {
+        inFlight = false;
+      }
+    };
+    void refreshBuilds();
+    const timer = window.setInterval(() => void refreshBuilds(), 3000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [buildingIds]);
+
   const createChallenge = async (e: React.FormEvent) => {
     e.preventDefault();
     setCreating(true);
@@ -341,12 +398,20 @@ export default function AdminDashboard() {
       const data = await res.json();
       if (!res.ok) {
         toast.error(data.error || "Failed to save TTL");
-        return;
+        return data.error || "Failed to save TTL";
       }
-      loadChallenges();
+      setChallenges((items) =>
+        items.map((item) =>
+          item.id === challengeId
+            ? { ...item, containerConfig: data.config }
+            : item,
+        ),
+      );
       toast.success("TTL saved");
+      return null;
     } catch {
       toast.error("Failed to save TTL");
+      return "Could not save TTL. Please retry.";
     } finally {
       setTtlBusyId(null);
     }
@@ -364,14 +429,29 @@ export default function AdminDashboard() {
         },
       );
       const data = await res.json();
+      if (data.config)
+        setChallenges((items) =>
+          items.map((item) =>
+            item.id === challengeId
+              ? { ...item, containerConfig: data.config }
+              : item,
+          ),
+        );
       if (!res.ok) {
         toast.error(data.error || "Failed to save Dockerfile");
-        return;
+        return (
+          data.error ||
+          data.config?.pendingLog ||
+          data.config?.buildLog ||
+          "Failed to save Dockerfile"
+        );
       }
-      loadChallenges();
+
       toast.success("Dockerfile saved — rebuilding image");
+      return null;
     } catch {
       toast.error("Failed to save Dockerfile");
+      return "Could not save Dockerfile. Check the connection and retry.";
     } finally {
       setRebuildBusyId(null);
     }

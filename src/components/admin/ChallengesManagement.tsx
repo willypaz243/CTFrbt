@@ -2,6 +2,7 @@
 
 import type { FormEvent } from "react";
 import { Fragment, useMemo, useState } from "react";
+import ExpiryCountdown from "@/components/ExpiryCountdown";
 import { useSortableTable } from "@/hooks/useSortableTable";
 
 export interface ChallengeContainerConfig {
@@ -85,8 +86,14 @@ interface ChallengesManagementProps {
   onDeleteFile: (challengeId: string, fileId: string) => void;
   onStartTest: (challengeId: string) => void;
   onStopTest: (challengeId: string) => void;
-  onRebuild: (challengeId: string, dockerfile: string) => void;
-  onSaveTtl: (challengeId: string, ttlMinutes: number | null) => void;
+  onRebuild: (
+    challengeId: string,
+    dockerfile: string,
+  ) => Promise<string | null>;
+  onSaveTtl: (
+    challengeId: string,
+    ttlMinutes: number | null,
+  ) => Promise<string | null>;
 }
 
 function formatSize(bytes: number): string {
@@ -212,14 +219,24 @@ function DockerfilePanel({
   challenge: Challenge;
   busy: boolean;
   ttlBusy: boolean;
-  onRebuild: (challengeId: string, dockerfile: string) => void;
-  onSaveTtl: (challengeId: string, ttlMinutes: number | null) => void;
+  onRebuild: (
+    challengeId: string,
+    dockerfile: string,
+  ) => Promise<string | null>;
+  onSaveTtl: (
+    challengeId: string,
+    ttlMinutes: number | null,
+  ) => Promise<string | null>;
 }) {
   const config = challenge.containerConfig!;
   const [draft, setDraft] = useState(config.dockerfile);
   const [ttlDraft, setTtlDraft] = useState(
     config.ttlMinutes == null ? "" : String(config.ttlMinutes),
   );
+  const [buildMessage, setBuildMessage] = useState("");
+  const [buildError, setBuildError] = useState(false);
+  const [ttlMessage, setTtlMessage] = useState("");
+  const [ttlError, setTtlError] = useState(false);
   const rebuilding = config.pendingState === "BUILDING";
   const initialBuildRunning =
     config.buildState === "QUEUED" || config.buildState === "BUILDING";
@@ -263,59 +280,144 @@ function DockerfilePanel({
           type="button"
           className="btn"
           style={{
-            fontSize: "11px",
-            padding: "2px 6px",
             marginLeft: "auto",
             cursor: busy || rebuilding ? "default" : "pointer",
+            minHeight: 42,
+            padding: "10px 16px",
+            fontSize: 13,
           }}
-          disabled={busy || rebuilding}
-          onClick={() => onRebuild(challenge.id, draft)}
+          disabled={busy || rebuilding || initialBuildRunning}
+          onClick={async () => {
+            setBuildError(false);
+            setBuildMessage("Saving Dockerfile…");
+            try {
+              const error = await onRebuild(challenge.id, draft);
+              setBuildError(!!error);
+              setBuildMessage(
+                error ||
+                  "Dockerfile saved. New instances will use the rebuilt image; running instances are unchanged.",
+              );
+            } catch {
+              setBuildError(true);
+              setBuildMessage("Could not save Dockerfile. Please retry.");
+            }
+          }}
         >
-          {busy ? "Saving..." : "Save & rebuild"}
+          {busy
+            ? "Saving…"
+            : rebuilding || initialBuildRunning
+              ? "Building…"
+              : "Save & rebuild"}
         </button>
       </div>
+      <p
+        role="status"
+        style={{
+          fontSize: 13,
+          margin: "8px 0",
+          color: buildError || failedLog ? "var(--danger)" : "var(--fg-dim)",
+        }}
+      >
+        {failedLog
+          ? "Build failed. See the details below and retry."
+          : rebuilding || initialBuildRunning
+            ? "Building image… Status updates automatically."
+            : buildMessage}
+      </p>
       <div
         style={{
           display: "flex",
-          alignItems: "center",
-          gap: "8px",
-          marginBottom: "6px",
+          flexWrap: "wrap",
+          alignItems: "end",
+          gap: 12,
+          margin: "16px 0",
         }}
       >
-        <span style={{ fontSize: "12px", fontWeight: 600 }}>Instance TTL</span>
-        <input
-          type="number"
-          min={1}
-          step={1}
-          placeholder="game end + 15 min"
-          value={ttlDraft}
-          onChange={(e) => setTtlDraft(e.target.value)}
-          style={{
-            width: "90px",
-            fontFamily: "var(--font-mono)",
-            fontSize: "12px",
-          }}
-        />
-        <span style={{ fontSize: "11px", color: "var(--fg-dim)" }}>
-          min — empty = game end + 15 min grace
-        </span>
+        <label style={{ fontSize: 14 }}>
+          Instance lifetime (minutes)
+          <input
+            className="form-input"
+            type="number"
+            min={1}
+            max={2147483647}
+            step={1}
+            placeholder="Default"
+            value={ttlDraft}
+            disabled={ttlBusy}
+            onChange={(e) => {
+              setTtlDraft(e.target.value);
+              setTtlMessage("");
+            }}
+            style={{
+              display: "block",
+              width: 200,
+              maxWidth: "100%",
+              minHeight: 42,
+              fontSize: 16,
+              marginTop: 8,
+            }}
+          />
+        </label>
         <button
           type="button"
           className="btn"
-          style={{
-            fontSize: "11px",
-            padding: "2px 6px",
-            marginLeft: "auto",
-            cursor: ttlBusy ? "default" : "pointer",
-          }}
           disabled={ttlBusy}
-          onClick={() => {
-            const trimmed = ttlDraft.trim();
-            onSaveTtl(challenge.id, trimmed === "" ? null : Number(trimmed));
+          style={{ minHeight: 42, padding: "10px 16px" }}
+          onClick={async () => {
+            const value = ttlDraft.trim() === "" ? null : Number(ttlDraft);
+            if (
+              value !== null &&
+              (!Number.isInteger(value) || value < 1 || value > 2147483647)
+            ) {
+              setTtlError(true);
+              setTtlMessage(
+                "Enter a positive whole number of minutes, or leave empty.",
+              );
+              return;
+            }
+            setTtlMessage("Saving…");
+            setTtlError(false);
+            try {
+              const error = await onSaveTtl(challenge.id, value);
+              setTtlError(!!error);
+              setTtlMessage(
+                error ||
+                  "Saved. Applies to newly started instances; existing timers stay unchanged.",
+              );
+            } catch {
+              setTtlError(true);
+              setTtlMessage("Could not save TTL. Please retry.");
+            }
           }}
         >
-          {ttlBusy ? "Saving..." : "Save TTL"}
+          {ttlBusy ? "Saving…" : "Save TTL"}
         </button>
+        <p
+          style={{
+            width: "100%",
+            margin: 0,
+            fontSize: 12,
+            color: "var(--fg-dim)",
+          }}
+        >
+          Saved duration:{" "}
+          {config.ttlMinutes == null
+            ? "event end + 15 minutes (no expiry if no end is set)"
+            : `${config.ttlMinutes} minutes`}
+          . Leave empty to use the default. Saving does not reset running
+          instances.
+        </p>
+        <p
+          role="status"
+          style={{
+            width: "100%",
+            margin: 0,
+            fontSize: 13,
+            color: ttlError ? "var(--danger)" : "var(--success)",
+          }}
+        >
+          {ttlMessage}
+        </p>
       </div>
       <textarea
         value={draft}
@@ -372,9 +474,7 @@ function TestInstancePanel({
   const config = challenge.containerConfig!;
   const running =
     config.testState === "RUNNING" || config.testState === "STARTING";
-  const expires = config.testExpiresAt
-    ? new Date(config.testExpiresAt).toLocaleTimeString()
-    : null;
+
   return (
     <div
       style={{
@@ -414,9 +514,12 @@ function TestInstancePanel({
             ) : (
               <span style={{ color: "var(--fg-dim)" }}>no exposed ports</span>
             )}
-            {expires && (
+            {config.testExpiresAt && (
               <span style={{ color: "var(--fg-dim)" }}>
-                (expires {expires})
+                <ExpiryCountdown
+                  expiresAt={config.testExpiresAt}
+                  label="Time remaining:"
+                />
               </span>
             )}
             <button

@@ -39,7 +39,8 @@ export async function GET() {
         containerPort?: number;
         hostPort?: number;
       } | null;
-      let containerState: "RUNNING" | "EXITED" | "MISSING" | null = null;
+      let containerState: "RUNNING" | "PAUSED" | "EXITED" | "MISSING" | null =
+        null;
       if (instance.containerId && liveByContainer) {
         containerState = liveByContainer.get(instance.containerId) ?? "MISSING";
       }

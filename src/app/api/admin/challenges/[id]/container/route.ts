@@ -224,10 +224,19 @@ export async function PATCH(
     return NextResponse.json({ error: "invalid JSON body" }, { status: 400 });
   }
 
+  if (!body || typeof body !== "object") {
+    return NextResponse.json(
+      { error: "Expected a JSON object" },
+      { status: 400 },
+    );
+  }
   const { ttlMinutes } = body;
   if (
     ttlMinutes === undefined ||
-    (ttlMinutes !== null && (!Number.isInteger(ttlMinutes) || ttlMinutes <= 0))
+    (ttlMinutes !== null &&
+      (!Number.isInteger(ttlMinutes) ||
+        ttlMinutes <= 0 ||
+        ttlMinutes > 2147483647))
   ) {
     return NextResponse.json(
       { error: "ttlMinutes must be a positive integer or null" },

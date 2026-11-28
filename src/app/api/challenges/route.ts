@@ -1,3 +1,4 @@
+import { pauseResponse } from "@/lib/event-pause";
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
@@ -51,6 +52,8 @@ export async function GET() {
 
   // Game window enforcement — admins always see full content
   const gameStatus = await getGameWindowStatus();
+  if (gameStatus.state === "paused" && !isAdmin)
+    return pauseResponse(gameStatus.resumesAt);
   if (gameStatus.state === "not_started" && !isAdmin) {
     return NextResponse.json({
       categories: [],

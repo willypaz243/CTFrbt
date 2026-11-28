@@ -44,6 +44,9 @@ COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 COPY --from=builder --chown=nextjs:nodejs /app/prisma ./prisma
 
+COPY --from=builder --chown=nextjs:nodejs /app/src/lib/prisma.ts /app/src/lib/orchestrator.ts /app/src/lib/instance-pause-controller.ts ./src/lib/
+COPY --from=builder --chown=nextjs:nodejs /app/scripts/instance-pause-worker.ts ./scripts/
+
 # The uploads volume's mount point is owned by root (rootless podman does
 # not copy ownership up), so start as root just long enough to fix it, then
 # drop to nextjs for the actual app.

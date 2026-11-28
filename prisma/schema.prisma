@@ -124,6 +124,9 @@ model ChallengeInstance {
   sshUser     String?   /// usuario SSH no-root del equipo, sanitizado del alias (#17)
   sshPass     String?   /// contraseña SSH aleatoria; rota en cada start (#17)
   expiresAt   DateTime?
+  suspensionStartedAt DateTime? /// Durable intent, retained until successful resume
+  suspensionError String?
+  suspensionCheckedAt DateTime?
   startCount  Int       @default(0)
   lastLog     String?
   createdAt   DateTime  @default(now())
@@ -297,6 +300,10 @@ model ActivityLog {
 }
 
 model GameConfig {
+  suspendInstances Boolean @default(false)
+  instancePauseStartedAt DateTime?
+  instanceControllerHeartbeat DateTime?
+  pausedUntil             DateTime? /// Automatic resume; does not extend endTime
   id                      String    @id @default(cuid())
   startTime               DateTime
   endTime                 DateTime?
